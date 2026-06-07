@@ -1,39 +1,56 @@
-// BARJ Volume Controller - Arduino Sketch
-// Reads N potentiometers and sends values over serial in deej-compatible format:
-// val0|val1|val2|...|valN\n  (values 0-1023)
+// BARJ Volume Controller — Arduino Sketch
+// Uses the same format as deej: val0|val1|val2|...|valN\n
 //
 // Wire each potentiometer:
-//   Left pin  -> GND
-//   Middle pin (wiper) -> A0, A1, A2, ...
-//   Right pin -> 5V
+//   Left pin  (GND)   -> Arduino GND
+//   Middle    (wiper) -> A0, A1, A2, A3, A4
+//   Right pin (5V)    -> Arduino 5V
 
-const int NUM_SLIDERS = 5;           // Change to match your potentiometer count
-const int ANALOG_PINS[NUM_SLIDERS] = {A0, A1, A2, A3, A4};
-const int SEND_INTERVAL_MS = 10;     // Send every 10ms (~100Hz)
+const int NUM_SLIDERS = 5;
+const int analogInputs[NUM_SLIDERS] = {A0, A1, A2, A3, A4};
 
-int values[NUM_SLIDERS] = {0};
+int analogSliderValues[NUM_SLIDERS];
 
 void setup() {
-  Serial.begin(9600);
   for (int i = 0; i < NUM_SLIDERS; i++) {
-    pinMode(ANALOG_PINS[i], INPUT);
+    pinMode(analogInputs[i], INPUT);
   }
+  Serial.begin(9600);
 }
 
 void loop() {
-  // Read all sliders
-  for (int i = 0; i < NUM_SLIDERS; i++) {
-    values[i] = analogRead(ANALOG_PINS[i]);
-  }
+  updateSliderValues();
+  sendSliderValues();
+  delay(10);
+}
 
-  // Send as pipe-separated values
+void updateSliderValues() {
   for (int i = 0; i < NUM_SLIDERS; i++) {
-    Serial.print(values[i]);
+    analogSliderValues[i] = analogRead(analogInputs[i]);
+  }
+}
+
+void sendSliderValues() {
+  String builtString = String("");
+  for (int i = 0; i < NUM_SLIDERS; i++) {
+    builtString += String((int)analogSliderValues[i]);
     if (i < NUM_SLIDERS - 1) {
-      Serial.print("|");
+      builtString += String("|");
     }
   }
-  Serial.println();  // newline to terminate the message
-
-  delay(SEND_INTERVAL_MS);
+  Serial.println(builtString);
 }
+
+// Uncomment to debug in Arduino Serial Monitor:
+// void printSliderValues() {
+//   for (int i = 0; i < NUM_SLIDERS; i++) {
+//     String printedString = String("Slider #") + String(i + 1)
+//                          + String(": ") + String(analogSliderValues[i]) + String(" mV");
+//     Serial.write(printedString.c_str());
+//     if (i < NUM_SLIDERS - 1) {
+//       Serial.write(" | ");
+//     } else {
+//       Serial.write("\n");
+//     }
+//   }
+// }

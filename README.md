@@ -10,7 +10,7 @@ with potentiometers. Compatible with standard deej wiring.
 **One command** — clones the repo and runs the installer:
 
 ```bash
-git clone https://github.com/JoeRAB/barj-volume-controller.git ~/barj-vc \
+git clone https://github.com/JoeRAB/BARJ-Volume-Controller.git ~/barj-vc \
   && cd ~/barj-vc && chmod +x install_linux.sh && ./install_linux.sh
 ```
 
@@ -33,7 +33,7 @@ cd ~/barj-vc && git pull && ./install_linux.sh
 ### Option A — Run from source (Python 3.10+ required)
 
 ```powershell
-git clone https://github.com/JoeRAB/barj-volume-controller.git
+git clone https://github.com/JoeRAB/BARJ-Volume-Controller.git
 cd barj-volume-controller
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned   # first time only
 .\install_windows.ps1
@@ -42,7 +42,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned   # first time only
 ### Option B — Standalone EXE (no Python needed)
 
 Download `barj-volume-controller.exe` from the
-[Releases](https://github.com/JoeRAB/barj-volume-controller/releases) page.
+[Releases](https://github.com/JoeRAB/BARJ-Volume-Controller/releases) page.
 
 **Build the EXE yourself:**
 
