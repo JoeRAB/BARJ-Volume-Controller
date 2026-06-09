@@ -20,6 +20,8 @@ param(
 $AppName     = "BARJ Volume Controller"
 $Pkg         = "barj_volume_controller"
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
+# The package + requirements live at the repo root, one level above packaging\
+$ProjectRoot = Split-Path -Parent $ScriptDir
 $InstallDir  = Join-Path $env:LOCALAPPDATA "BARJ"
 $VenvDir     = Join-Path $InstallDir "venv"
 $ConfigDir   = Join-Path $env:APPDATA  "BARJ"
@@ -104,8 +106,8 @@ function Do-Install {
   if (-not $py) { Write-Host "Python not found. Aborting." -ForegroundColor Red; return }
 
   New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-  Copy-Item (Join-Path $ScriptDir $Pkg) -Destination $InstallDir -Recurse -Force
-  Copy-Item (Join-Path $ScriptDir "requirements.txt") -Destination $InstallDir -Force
+  Copy-Item (Join-Path $ProjectRoot $Pkg) -Destination $InstallDir -Recurse -Force
+  Copy-Item (Join-Path $ProjectRoot "requirements.txt") -Destination $InstallDir -Force
 
   & $py -m venv $VenvDir
   $venvPy = Join-Path $VenvDir "Scripts\python.exe"

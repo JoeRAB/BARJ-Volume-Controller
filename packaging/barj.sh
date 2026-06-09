@@ -20,6 +20,8 @@ BIN_DIR="${HOME}/.local/bin"
 BIN_PATH="${BIN_DIR}/barj"
 VENV_DIR="${INSTALL_DIR}/venv"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The package + requirements live at the repo root, one level above packaging/
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # GitHub source. Update pulls the latest source archive from the default branch.
 GH_OWNER="JoeRAB"
@@ -117,8 +119,8 @@ do_install() {
   mkdir -p "${INSTALL_DIR}" "${BIN_DIR}"
 
   # Copy package + requirements into install dir
-  cp -r "${SCRIPT_DIR}/${PKG}" "${INSTALL_DIR}/"
-  cp "${SCRIPT_DIR}/requirements.txt" "${INSTALL_DIR}/"
+  cp -r "${PROJECT_ROOT}/${PKG}" "${INSTALL_DIR}/"
+  cp "${PROJECT_ROOT}/requirements.txt" "${INSTALL_DIR}/"
 
   # Create venv and install python deps
   python3 -m venv "${VENV_DIR}"
