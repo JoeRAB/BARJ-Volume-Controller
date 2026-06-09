@@ -3,28 +3,47 @@
 A hardware volume controller for **Windows** and **Linux**, driven by an Arduino
 with potentiometers. Compatible with standard deej wiring.
 
+Each slider can control your system master volume, a specific app, or "all other"
+unassigned apps — with named-device detection, profiles, a system tray icon, and
+a built-in dependency checker.
+
 ---
 
 ## Install on Linux
 
-**One command** — clones the repo and runs the installer:
+One command — clones the repo and runs the manager:
 
 ```bash
 git clone https://github.com/JoeRAB/BARJ-Volume-Controller.git ~/barj-vc \
-  && cd ~/barj-vc && chmod +x install_linux.sh && ./install_linux.sh
+  && cd ~/barj-vc && chmod +x manage.sh && ./manage.sh
 ```
 
-The installer works on any distro with a supported package manager:
-`apt` · `dnf` · `pacman` · `zypper`
+`manage.sh` is the single script for **install, update, and uninstall**. On launch
+it scans for an existing installation and shows the relevant menu.
 
-**To update** — re-run the installer. Your config and profiles are safe:
+Works on any distro with a supported package manager: `apt` · `dnf` · `pacman` · `zypper`
+
+### Update
 
 ```bash
-cd ~/barj-vc && git pull && ./install_linux.sh
+cd ~/barj-vc && git pull && ./manage.sh
 ```
 
-> **Config is stored at `~/.config/barj-volume-controller/config.yaml`** —
-> completely separate from the install directory and never modified by the installer.
+When an existing install is detected, choose **Update**. The update reuses the same
+install folder and **never touches your config or profiles**.
+
+### Uninstall
+
+```bash
+cd ~/barj-vc && ./manage.sh
+```
+
+Choose **Uninstall**. It removes every app file and folder, then asks separately
+whether to also delete your saved profiles (default keeps them).
+
+> **Your config lives at `~/.config/barj-volume-controller/config.yaml`** —
+> completely separate from the install directory, and never modified by the
+> installer or updater.
 
 ---
 
@@ -34,7 +53,7 @@ cd ~/barj-vc && git pull && ./install_linux.sh
 
 ```powershell
 git clone https://github.com/JoeRAB/BARJ-Volume-Controller.git
-cd barj-volume-controller
+cd BARJ-Volume-Controller
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned   # first time only
 .\install_windows.ps1
 ```
@@ -67,28 +86,53 @@ Middle    (wiper) →  A0, A1, A2, …
 Right pin (5V)    →  Arduino 5V
 ```
 
-Upload `arduino/volume_mixer.ino` to your board. Set `NUM_SLIDERS` to match
-your pot count if different from 5.
+Upload `arduino/volume_mixer.ino` to your board. Set `NUM_SLIDERS` to match your
+pot count if different from 5.
 
 ---
 
 ## First-time setup
 
-1. Open **⚙ Settings**, select your serial port, click **Save**
-   - Linux: `/dev/ttyACM0` or `/dev/ttyUSB0`
-   - Windows: `COM3`, `COM4`, etc.
-2. Assign each slider in the dropdown
-   - `master` → system volume
-   - Any other name → per-app volume (`firefox`, `spotify`, `chrome.exe`, …)
-3. Apps playing audio appear in the dropdown automatically
+1. The **Connecting to Hardware** dialog appears on launch. Pick your serial port
+   from the dropdown — detected devices show their name, e.g. `/dev/ttyACM0 — Arduino Uno`.
+   The dialog disappears once connected. Tick **Don't show on launch** to skip it
+   next time (re-enable later in ⚙ Settings).
+2. Assign each slider using its dropdown:
+   - **master** → system master volume
+   - **all_others** → every running app *not* assigned to another slider
+   - any app name (e.g. `firefox`, `spotify`) → that specific app
+3. Each target can only be assigned to one slider. Picking it on a second slider
+   clears it from the first.
+
+---
+
+## Slider behaviour
+
+- App volumes are a **percentage of the master volume** — the audio system
+  multiplies app × master internally, so app sliders never raise volume above
+  what master allows.
+- **Save As (💾)** in the header saves the current slider layout as a named profile.
+- The **Profile** dropdown switches between saved profiles. Use **+** to create a
+  blank profile and **−** to delete one.
 
 ---
 
 ## Dependency check
 
-On startup, BARJ Volume Controller checks all required and optional
-dependencies and shows a status panel if anything is missing, with
-copy-paste fix commands so you know exactly what to run.
+On startup the app verifies all required and optional packages and lists them:
+
+```
+pyserial       - Installed
+PyYAML         - Installed
+pulsectl       - Missing
+pystray        - Installed
+Pillow         - Installed
+
+Do you want to install missing dependencies?
+```
+
+Choosing **Install** runs pip for the missing ones; choosing **No** closes the app
+without changes.
 
 ---
 
@@ -104,13 +148,18 @@ Prints every Arduino tick to the terminal:
 [DEBUG] raw=[  512 |  255 |  768 |    0 | 1023 ]  smoothed=[ ... ]  norm=[ ... ]
 ```
 
+Useful for diagnosing wiring or solder issues — bad data triggers a single,
+rate-limited error dialog showing the raw bytes received.
+
 ---
 
 ## Config file
 
-Stored at `~/.config/barj-volume-controller/config.yaml` (Linux) or
-`%APPDATA%\BARJ Volume Controller\config.yaml` (Windows). Never deleted by
-updates or reinstalls.
+Stored at:
+- **Linux:** `~/.config/barj-volume-controller/config.yaml`
+- **Windows:** `%APPDATA%\BARJ Volume Controller\config.yaml`
+
+Never deleted by updates or reinstalls.
 
 ```yaml
 serial:
@@ -119,11 +168,13 @@ serial:
 sliders:
   count: 5
   smoothing: 0.15
+ui:
+  show_connecting_on_launch: true
 profiles:
   Default:
     - {target: master, label: Master}
-    - {target: firefox, label: Firefox}
-    - {target: '', label: Slider 3}
+    - {target: all_others, label: All Others}
+    - {target: firefox, label: Slider 3}
     - {target: '', label: Slider 4}
     - {target: '', label: Slider 5}
 current_profile: Default
@@ -131,10 +182,38 @@ current_profile: Default
 
 ---
 
+## Troubleshooting
+
+**The manager asks to "update/uninstall" on a fresh machine**
+A previous install left files behind. Clear them with:
+
+```bash
+rm -rf ~/.local/share/barj-volume-controller
+rm -f  ~/.local/bin/barj-volume-controller
+rm -f  ~/.local/share/applications/barj-volume-controller.desktop
+```
+
+Your config is not affected. (The current uninstaller removes all of these
+automatically.)
+
+**Arduino not detected on Linux**
+Make sure you're in the serial group and have logged out/in since install:
+
+```bash
+groups | grep -E 'dialout|uucp'
+```
+
+**Tray icon missing on GNOME**
+Install the
+[AppIndicator extension](https://extensions.gnome.org/extension/615/).
+The app still works without it.
+
+---
+
 ## Project structure
 
 ```
-barj-volume-controller/
+BARJ-Volume-Controller/
 ├── arduino/
 │   └── volume_mixer.ino         Arduino sketch
 ├── audio/
@@ -143,17 +222,19 @@ barj-volume-controller/
 │   ├── windows_audio.py         pycaw (Windows Core Audio)
 │   └── linux_audio.py           pulsectl (PulseAudio / PipeWire)
 ├── gui/
-│   ├── dependency_check.py      Startup dep checker + status panel
+│   ├── connecting_dialog.py     Connect-to-hardware dialog
+│   ├── dependency_check.py      Startup dependency checker
+│   ├── error_dialog.py          Single-instance error popup
 │   ├── main_window.py           Main window
-│   ├── slider_panel.py          VU meter widget
-│   └── settings_dialog.py       Settings modal
+│   ├── settings_dialog.py       Settings modal
+│   └── slider_panel.py          VU meter widget
 ├── app_detector.py              Background audio-app polling
 ├── config_manager.py            XDG/APPDATA config (update-safe)
 ├── serial_reader.py             Serial comms + EMA smoothing
 ├── tray_icon.py                 System tray icon
 ├── main.py                      Entry point (--debug)
 ├── barj_vc.spec                 PyInstaller spec
-├── build_windows.ps1            Windows EXE build script
-├── install_linux.sh             Linux installer (distro-agnostic)
-└── install_windows.ps1          Windows from-source installer
+├── build_windows.ps1            Windows EXE build
+├── install_windows.ps1          Windows from-source installer
+└── manage.sh                    Linux install / update / uninstall
 ```

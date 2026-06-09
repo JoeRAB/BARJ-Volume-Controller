@@ -350,11 +350,26 @@ do_update() {
 do_uninstall() {
     local install_dir="$1"
 
+    # Build the full list of locations to remove. We always clean BOTH the
+    # passed-in install dir AND the default location, so no stray folders are
+    # ever left behind (which previously caused false "update" detection).
+    local -a remove_dirs=()
+    local -a remove_files=()
+
+    # App directories (dedupe default + custom)
+    remove_dirs+=("$DEFAULT_INSTALL_DIR")
+    if [[ "$install_dir" != "$DEFAULT_INSTALL_DIR" ]]; then
+        remove_dirs+=("$install_dir")
+    fi
+
+    # Launcher + desktop entry
+    remove_files+=("$BIN_DIR/$APP_NAME")
+    remove_files+=("$DESKTOP_DIR/$APP_NAME.desktop")
+
     blank
     say "${BOLD}The following will be removed:${RESET}"
-    say "  ${CYAN}$install_dir${RESET}"
-    say "  ${CYAN}$BIN_DIR/$APP_NAME${RESET}"
-    say "  ${CYAN}$DESKTOP_DIR/$APP_NAME.desktop${RESET}"
+    for d in "${remove_dirs[@]}";  do [[ -e "$d" ]] && say "  ${CYAN}$d${RESET}"; done
+    for f in "${remove_files[@]}"; do [[ -e "$f" ]] && say "  ${CYAN}$f${RESET}"; done
     blank
 
     local del_config="n"
@@ -373,12 +388,24 @@ do_uninstall() {
         *) say "Uninstall cancelled."; exit 0 ;;
     esac
 
-    [[ -d "$install_dir" ]]                     && rm -rf "$install_dir"       && success "Removed: $install_dir"
-    [[ -f "$BIN_DIR/$APP_NAME" ]]               && rm -f  "$BIN_DIR/$APP_NAME" && success "Removed: $BIN_DIR/$APP_NAME"
-    [[ -f "$DESKTOP_DIR/$APP_NAME.desktop" ]]   && rm -f  "$DESKTOP_DIR/$APP_NAME.desktop" && success "Removed: .desktop entry"
+    # Remove all app directories
+    for d in "${remove_dirs[@]}"; do
+        if [[ -d "$d" ]]; then
+            rm -rf "$d" && success "Removed: $d"
+        fi
+    done
+
+    # Remove all files
+    for f in "${remove_files[@]}"; do
+        if [[ -e "$f" ]]; then
+            rm -f "$f" && success "Removed: $f"
+        fi
+    done
+
     command -v update-desktop-database &>/dev/null \
         && update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
 
+    # Config — only if explicitly requested
     if [[ "${del_config,,}" == "y" ]]; then
         [[ -d "$CONFIG_DIR" ]] && rm -rf "$CONFIG_DIR" && success "Removed: $CONFIG_DIR"
     else
@@ -389,7 +416,7 @@ do_uninstall() {
     fi
 
     blank
-    say "${BOLD}${GREEN}BARJ Volume Controller has been uninstalled.${RESET}"
+    say "${BOLD}${GREEN}BARJ Volume Controller has been fully uninstalled.${RESET}"
     blank
 }
 
