@@ -52,6 +52,18 @@ BARJ-Volume-Controller/
 
 ### One-line install (downloads from GitHub and runs the installer)
 
+**Universal (any OS with Python 3):**
+```bash
+# Linux / macOS
+python3 -c "$(curl -fsSL https://raw.githubusercontent.com/JoeRAB/BARJ-Volume-Controller/main/packaging/install.py)"
+```
+```powershell
+# Windows (PowerShell)
+python -c "$(irm https://raw.githubusercontent.com/JoeRAB/BARJ-Volume-Controller/main/packaging/install.py)"
+```
+
+**Shell-native alternatives:**
+
 **Linux / macOS**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JoeRAB/BARJ-Volume-Controller/main/packaging/install.sh | bash
