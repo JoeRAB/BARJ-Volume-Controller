@@ -24,7 +24,10 @@ $InstallDir  = Join-Path $env:LOCALAPPDATA "BARJ"
 $VenvDir     = Join-Path $InstallDir "venv"
 $ConfigDir   = Join-Path $env:APPDATA  "BARJ"
 $StartMenu   = Join-Path $env:APPDATA  "Microsoft\Windows\Start Menu\Programs"
-$RepoZipUrl  = if ($env:BARJ_REPO_ZIP_URL) { $env:BARJ_REPO_ZIP_URL } else { "https://example.com/barj/latest.zip" }
+$GhOwner     = "JoeRAB"
+$GhRepo      = "BARJ-Volume-Controller"
+$GhBranch    = if ($env:BARJ_BRANCH) { $env:BARJ_BRANCH } else { "main" }
+$RepoZipUrl  = if ($env:BARJ_REPO_ZIP_URL) { $env:BARJ_REPO_ZIP_URL } else { "https://github.com/$GhOwner/$GhRepo/archive/refs/heads/$GhBranch.zip" }
 
 function Write-Status($name, $present) {
   if ($present) { Write-Host "$name - " -NoNewline; Write-Host "Installed" -ForegroundColor Green }

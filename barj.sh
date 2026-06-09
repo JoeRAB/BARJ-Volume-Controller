@@ -21,8 +21,12 @@ BIN_PATH="${BIN_DIR}/barj"
 VENV_DIR="${INSTALL_DIR}/venv"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Where to fetch updates from. Adjust to your fork/release URL.
-REPO_ZIP_URL="${BARJ_REPO_ZIP_URL:-https://example.com/barj/latest.zip}"
+# GitHub source. Update pulls the latest source archive from the default branch.
+GH_OWNER="JoeRAB"
+GH_REPO="BARJ-Volume-Controller"
+GH_BRANCH="${BARJ_BRANCH:-main}"
+# Allow override, else use GitHub's auto-generated branch tarball/zip.
+REPO_ZIP_URL="${BARJ_REPO_ZIP_URL:-https://github.com/${GH_OWNER}/${GH_REPO}/archive/refs/heads/${GH_BRANCH}.zip}"
 
 OS="$(uname -s)"
 

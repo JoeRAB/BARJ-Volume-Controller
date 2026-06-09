@@ -16,7 +16,7 @@ A modern, cross-platform reimagining of [deej](https://github.com/omriharel/deej
 ## Repository layout
 
 ```
-barj/
+BARJ-Volume-Controller/
 ├── arduino/barj-sliders/barj-sliders.ino   Arduino firmware (Pro Micro/Leonardo)
 ├── barj_volume_controller/                 Python application package
 │   ├── audio/                              per-OS audio backends
@@ -25,9 +25,13 @@ barj/
 │   ├── serial_device.py                    port discovery + reader
 │   ├── config.py                           profiles & settings
 │   └── autostart.py                        launch-on-startup (per-OS)
-├── packaging/barj.sh                       Linux/macOS management script
-├── packaging/barj.ps1                      Windows management script
-└── requirements.txt
+├── packaging/
+│   ├── install.sh / install.ps1            one-line GitHub bootstrap installers
+│   ├── barj.sh                             Linux/macOS management script
+│   └── barj.ps1                            Windows management script
+├── requirements.txt
+├── LICENSE
+└── README.md
 ```
 
 ## Arduino setup
@@ -37,17 +41,38 @@ barj/
 3. Edit `NUM_SLIDERS` and `SLIDER_PINS` to match your wiring (default: 5 sliders on A0–A3, A6).
 4. Upload. The board streams pipe-separated values (`0|512|1023|...`) and answers a `barj-id?` handshake so the GUI can identify it automatically.
 
+## Download
+
+**Source:** <https://github.com/JoeRAB/BARJ-Volume-Controller>
+
+- **Clone:** `git clone https://github.com/JoeRAB/BARJ-Volume-Controller.git`
+- **Zip:** click *Code → Download ZIP* on GitHub, or grab a tagged build from the [Releases page](https://github.com/JoeRAB/BARJ-Volume-Controller/releases).
+
 ## Install
+
+### One-line install (downloads from GitHub and runs the installer)
 
 **Linux / macOS**
 ```bash
-cd barj
+curl -fsSL https://raw.githubusercontent.com/JoeRAB/BARJ-Volume-Controller/main/packaging/install.sh | bash
+```
+
+**Windows** (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/JoeRAB/BARJ-Volume-Controller/main/packaging/install.ps1 | iex
+```
+
+### From a downloaded/cloned copy
+
+**Linux / macOS**
+```bash
+cd BARJ-Volume-Controller
 ./packaging/barj.sh install
 ```
 
 **Windows** (PowerShell)
 ```powershell
-cd barj
+cd BARJ-Volume-Controller
 # If scripts are blocked: Set-ExecutionPolicy -Scope Process Bypass
 .\packaging\barj.ps1 install
 ```
@@ -61,7 +86,7 @@ The installer checks dependencies, prints each as `name - Installed` / `name - M
 .\packaging\barj.ps1 update          # Windows
 ```
 
-Set the download URL via the `BARJ_REPO_ZIP_URL` environment variable (defaults to a placeholder — point it at your release zip).
+By default this pulls the latest source from the `main` branch of the GitHub repo. Override with `BARJ_REPO_ZIP_URL` (e.g. to point at a specific release asset) or `BARJ_BRANCH`.
 
 ## Uninstall
 
