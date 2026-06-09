@@ -1,175 +1,86 @@
 """
 gui/dependency_check.py
 
-Checks all required and optional dependencies at startup and displays
-a status panel within the app if anything is missing.
+Checks all required and optional dependencies at startup.
 
-Critical deps missing  → blocking dialog, app cannot continue
-Optional deps missing  → non-blocking warning panel in main window
-All good               → silent pass-through
+Display format:
+  pyserial   — Installed
+  pulsectl   — Missing
+  pystray    — Installed
+
+  Do you want to install missing dependencies? [Install] [Skip]
 """
 
 import importlib
 import platform
 import subprocess
+import sys
 import tkinter as tk
 from tkinter import ttk
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-# ── Colour palette (matches main window) ─────────────────────────────────────
-BG        = "#181825"
-BG_CARD   = "#1e1e2e"
-BG_ROW_A  = "#1e1e2e"
-BG_ROW_B  = "#24243a"
-FG        = "#cdd6f4"
-FG_MUTED  = "#6c7086"
-OK        = "#a6e3a1"
-WARN      = "#f9e2af"
-ERR       = "#f38ba8"
-ACCENT    = "#cba6f7"
-BTN_BG    = "#45475a"
+BG      = "#181825"
+BG_CARD = "#1e1e2e"
+FG      = "#cdd6f4"
+FG_MUTED= "#6c7086"
+OK      = "#a6e3a1"
+ERR     = "#f38ba8"
+WARN    = "#f9e2af"
+ACCENT  = "#cba6f7"
+BTN_BG  = "#45475a"
 
 
 @dataclass
 class Dep:
-    """Describes one dependency."""
-    display_name:  str
-    import_name:   str
-    pip_package:   str
-    required:      bool
-    description:   str
-    platforms:     List[str]  = field(default_factory=lambda: ["Linux", "Windows", "Darwin"])
-    apt_package:   str        = ""
-    dnf_package:   str        = ""
-    pacman_package: str       = ""
-    status:        Optional[bool] = None   # None = unchecked
-    error_detail:  str        = ""
+    display_name:   str
+    import_name:    str
+    pip_package:    str
+    required:       bool
+    description:    str
+    platforms:      List[str] = field(default_factory=lambda: ["Linux", "Windows", "Darwin"])
+    status:         Optional[bool] = None
 
-
-# ── Dependency definitions ────────────────────────────────────────────────────
 
 DEPS: List[Dep] = [
-    Dep("pyserial",  "serial",   "pyserial",  True,
-        "Arduino serial port communication",
-        apt_package="python3-serial"),
-
-    Dep("PyYAML",    "yaml",     "pyyaml",    True,
-        "Config file (YAML) read/write"),
-
-    Dep("pulsectl",  "pulsectl", "pulsectl",  True,
-        "Linux audio control (PulseAudio / PipeWire)",
-        platforms=["Linux"],
-        apt_package="python3-pulsectl"),
-
-    Dep("pycaw",     "pycaw",    "pycaw",     True,
-        "Windows audio control (Core Audio API)",
-        platforms=["Windows"]),
-
-    Dep("pystray",   "pystray",  "pystray",   False,
-        "System tray icon (optional)"),
-
-    Dep("Pillow",    "PIL",      "Pillow",    False,
-        "Tray icon image rendering (optional)"),
+    Dep("pyserial",  "serial",   "pyserial",  True,  "Arduino serial communication"),
+    Dep("PyYAML",    "yaml",     "pyyaml",    True,  "Config file read/write"),
+    Dep("pulsectl",  "pulsectl", "pulsectl",  True,  "Linux audio control",  platforms=["Linux"]),
+    Dep("pycaw",     "pycaw",    "pycaw",     True,  "Windows audio control", platforms=["Windows"]),
+    Dep("pystray",   "pystray",  "pystray",   False, "System tray icon"),
+    Dep("Pillow",    "PIL",      "Pillow",    False, "Tray icon image"),
 ]
 
 
-# ── Extra system checks (Linux only) ─────────────────────────────────────────
-
-@dataclass
-class SysCheck:
-    name:        str
-    description: str
-    required:    bool
-    status:      Optional[bool] = None
-    detail:      str = ""
-    fix_hint:    str = ""
+def _check_deps(deps: List[Dep]):
+    for dep in deps:
+        try:
+            importlib.import_module(dep.import_name)
+            dep.status = True
+        except ImportError:
+            dep.status = False
 
 
-def _run_sys_checks() -> List[SysCheck]:
-    checks: List[SysCheck] = []
-    if platform.system() != "Linux":
-        return checks
-
-    # PulseAudio / PipeWire socket
-    c = SysCheck(
-        name="Audio server",
-        description="PulseAudio or PipeWire running",
-        required=True,
-        fix_hint="Start PipeWire:  systemctl --user start pipewire pipewire-pulse\n"
-                 "or PulseAudio:  pulseaudio --start",
-    )
+def _pip_install(packages: List[str]) -> tuple:
+    """Run pip install for the given packages. Returns (success, output)."""
     try:
         result = subprocess.run(
-            ["pactl", "info"], capture_output=True, timeout=3
+            [sys.executable, "-m", "pip", "install"] + packages,
+            capture_output=True, text=True, timeout=120
         )
-        c.status = result.returncode == 0
-        if not c.status:
-            c.detail = result.stderr.decode(errors="ignore").strip()
-    except FileNotFoundError:
-        c.status = False
-        c.detail = "'pactl' not found — install pulseaudio-utils or pipewire-pulse"
-        c.fix_hint = "sudo apt install pulseaudio-utils   # or pipewire-pulse"
+        return result.returncode == 0, result.stdout + result.stderr
     except Exception as e:
-        c.status = False
-        c.detail = str(e)
-    checks.append(c)
+        return False, str(e)
 
-    # dialout / uucp group
-    import grp, pwd, os
-    serial_group = None
-    for gname in ("dialout", "uucp"):
-        try:
-            grp.getgrnam(gname)
-            serial_group = gname
-            break
-        except KeyError:
-            pass
-
-    g = SysCheck(
-        name="Serial port access",
-        description=f"User in '{serial_group or 'dialout'}' group",
-        required=False,
-        fix_hint=f"sudo usermod -aG {serial_group or 'dialout'} $USER   (then log out and back in)",
-    )
-    if serial_group:
-        try:
-            user_groups = [grp.getgrgid(gid).gr_name
-                           for gid in os.getgroups()]
-            g.status = serial_group in user_groups
-            if not g.status:
-                g.detail = (f"Add yourself: sudo usermod -aG {serial_group} $USER\n"
-                            "Then log out and back in.")
-        except Exception as e:
-            g.status = False
-            g.detail = str(e)
-    else:
-        g.status = True   # group doesn't exist on this distro, skip
-        g.detail = "No dialout/uucp group found — may not be needed on this distro"
-    checks.append(g)
-
-    return checks
-
-
-# ── Dependency checker ────────────────────────────────────────────────────────
 
 class DependencyChecker:
-    """Run all checks and expose results."""
-
     def __init__(self):
-        self.system   = platform.system()
-        self.deps     = [d for d in DEPS if self.system in d.platforms]
-        self.sys_checks = _run_sys_checks()
-        self._run()
+        self.system = platform.system()
+        self.deps   = [d for d in DEPS if self.system in d.platforms]
+        _check_deps(self.deps)
 
-    def _run(self):
-        for dep in self.deps:
-            try:
-                importlib.import_module(dep.import_name)
-                dep.status = True
-            except ImportError as e:
-                dep.status = False
-                dep.error_detail = str(e)
+    def recheck(self):
+        _check_deps(self.deps)
 
     @property
     def critical_failures(self) -> List[Dep]:
@@ -180,195 +91,229 @@ class DependencyChecker:
         return [d for d in self.deps if not d.required and not d.status]
 
     @property
-    def sys_failures(self) -> List[SysCheck]:
-        return [c for c in self.sys_checks if not c.status]
-
-    @property
     def all_ok(self) -> bool:
-        return not self.critical_failures and not self.sys_failures
+        return not self.critical_failures
 
-    def pip_fix_command(self, deps: List[Dep]) -> str:
-        pkgs = " ".join(d.pip_package for d in deps)
-        return f"pip install {pkgs}"
+    def missing_pip_packages(self) -> List[str]:
+        return [d.pip_package for d in self.deps if not d.status]
 
 
-# ── Blocking dialog (critical failures) ──────────────────────────────────────
-
-class DependencyErrorDialog(tk.Toplevel):
+class DependencyDialog(tk.Toplevel):
     """
-    Shown before the main window if critical deps are missing.
-    User must fix and restart — there is no 'continue'.
+    Shows all deps in a simple list, offers to install missing ones.
+    Blocks the app until dismissed or fixed.
     """
 
-    def __init__(self, parent, checker: DependencyChecker):
+    def __init__(self, parent, checker: DependencyChecker, on_ok, on_cancel):
         super().__init__(parent)
-        self.checker = checker
-        self.title("BARJ Volume Controller — Missing Dependencies")
+        self.checker   = checker
+        self._on_ok     = on_ok
+        self._on_cancel = on_cancel
+
+        self.title("BARJ Volume Controller — Dependencies")
         self.configure(bg=BG)
         self.resizable(False, False)
         self.grab_set()
+        self.transient(parent)
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
         self._build()
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._center(parent)
 
     def _build(self):
-        pad = dict(padx=20, pady=8)
+        outer = tk.Frame(self, bg=BG, padx=32, pady=24)
+        outer.pack()
 
-        tk.Label(self, text="⚠  Missing Required Dependencies",
-                 font=("Segoe UI", 13, "bold"), bg=BG, fg=ERR
-                 ).pack(**pad, pady=(20, 4))
+        tk.Label(outer, text="Dependency Check",
+                 font=("Segoe UI", 13, "bold"), bg=BG, fg=ACCENT
+                 ).pack(anchor="w", pady=(0, 16))
 
-        tk.Label(self,
-                 text="The following are required for BARJ Volume Controller to run.\n"
-                      "Install them and restart the application.",
-                 font=("Segoe UI", 10), bg=BG, fg=FG_MUTED, justify="center"
-                 ).pack(padx=20)
+        # ---- Dep list ----
+        self._list_frame = tk.Frame(outer, bg=BG)
+        self._list_frame.pack(anchor="w", fill="x")
+        self._render_list()
 
-        # ---- Dep rows ----
-        for dep in self.checker.critical_failures:
-            self._dep_row(dep)
+        # ---- Separator ----
+        tk.Frame(outer, bg=BTN_BG, height=1).pack(fill="x", pady=16)
 
-        # ---- Sys check failures ----
-        for chk in self.checker.sys_failures:
-            if chk.required:
-                self._sys_row(chk)
+        # ---- Install prompt (hidden when all ok) ----
+        self._action_frame = tk.Frame(outer, bg=BG)
+        self._action_frame.pack(fill="x")
+        self._render_actions()
 
-        # ---- pip fix command ----
-        pip_deps = [d for d in self.checker.critical_failures]
-        if pip_deps:
-            self._fix_box("Install with pip:", self.checker.pip_fix_command(pip_deps))
+    def _render_list(self):
+        for w in self._list_frame.winfo_children():
+            w.destroy()
 
-        # ---- Quit button ----
-        tk.Button(self, text="Quit", command=self._on_close,
-                  bg=ERR, fg=BG, font=("Segoe UI", 10, "bold"),
-                  relief="flat", padx=20, pady=6, cursor="hand2"
-                  ).pack(pady=(8, 20))
+        for dep in self.checker.deps:
+            row = tk.Frame(self._list_frame, bg=BG)
+            row.pack(anchor="w", pady=2)
 
-    def _dep_row(self, dep: Dep):
-        f = tk.Frame(self, bg=BG_CARD, padx=14, pady=8)
-        f.pack(fill="x", padx=20, pady=3)
-        tk.Label(f, text="✗", fg=ERR, bg=BG_CARD,
-                 font=("Segoe UI", 11, "bold"), width=2).pack(side="left")
-        info = tk.Frame(f, bg=BG_CARD)
-        info.pack(side="left", fill="x", expand=True)
-        tk.Label(info, text=dep.display_name, fg=FG, bg=BG_CARD,
-                 font=("Segoe UI", 10, "bold"), anchor="w").pack(anchor="w")
-        tk.Label(info, text=dep.description, fg=FG_MUTED, bg=BG_CARD,
-                 font=("Segoe UI", 9), anchor="w").pack(anchor="w")
+            name_lbl = tk.Label(row, text=f"{dep.display_name:<14}",
+                                font=("Courier", 10), bg=BG, fg=FG, width=14,
+                                anchor="w")
+            name_lbl.pack(side="left")
 
-    def _sys_row(self, chk: SysCheck):
-        f = tk.Frame(self, bg=BG_CARD, padx=14, pady=8)
-        f.pack(fill="x", padx=20, pady=3)
-        tk.Label(f, text="✗", fg=ERR, bg=BG_CARD,
-                 font=("Segoe UI", 11, "bold"), width=2).pack(side="left")
-        info = tk.Frame(f, bg=BG_CARD)
-        info.pack(side="left", fill="x", expand=True)
-        tk.Label(info, text=chk.name, fg=FG, bg=BG_CARD,
-                 font=("Segoe UI", 10, "bold"), anchor="w").pack(anchor="w")
-        tk.Label(info, text=chk.detail or chk.description, fg=FG_MUTED, bg=BG_CARD,
-                 font=("Segoe UI", 9), anchor="w", wraplength=380, justify="left"
-                 ).pack(anchor="w")
-        if chk.fix_hint:
-            self._fix_box("Fix:", chk.fix_hint, parent=f)
+            tk.Label(row, text="—", bg=BG, fg=FG_MUTED,
+                     font=("Segoe UI", 10)).pack(side="left", padx=6)
 
-    def _fix_box(self, label: str, text: str, parent=None):
-        p = parent or self
-        outer = tk.Frame(p, bg=BG, padx=20 if parent is None else 0,
-                         pady=4 if parent is None else 2)
-        outer.pack(fill="x")
-        tk.Label(outer, text=label, fg=ACCENT, bg=BG,
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        box = tk.Frame(outer, bg="#11111b", padx=10, pady=6)
-        box.pack(fill="x")
-        t = tk.Text(box, height=text.count("\n") + 1, bg="#11111b", fg=OK,
-                    font=("Courier", 9), relief="flat", wrap="none",
-                    selectbackground=BTN_BG)
-        t.insert("1.0", text)
-        t.configure(state="disabled")
-        t.pack(fill="x")
+            if dep.status:
+                status_text  = "Installed"
+                status_color = OK
+            else:
+                status_text  = "Missing" + ("" if dep.required else "  (optional)")
+                status_color = ERR if dep.required else WARN
 
-    def _on_close(self):
-        self.master.destroy()
+            tk.Label(row, text=status_text,
+                     font=("Segoe UI", 10, "bold"), bg=BG, fg=status_color
+                     ).pack(side="left")
 
+    def _render_actions(self):
+        for w in self._action_frame.winfo_children():
+            w.destroy()
 
-# ── Non-blocking status panel (optional failures) ────────────────────────────
+        missing = self.checker.missing_pip_packages()
+
+        if not missing:
+            # All good
+            tk.Label(self._action_frame,
+                     text="✓  All dependencies are installed.",
+                     font=("Segoe UI", 10), bg=BG, fg=OK
+                     ).pack(anchor="w", pady=(0, 12))
+            tk.Button(self._action_frame, text="Continue",
+                      command=self._ok,
+                      bg=ACCENT, fg=BG,
+                      font=("Segoe UI", 10, "bold"),
+                      relief="flat", padx=20, pady=6, cursor="hand2"
+                      ).pack(anchor="w")
+        else:
+            tk.Label(self._action_frame,
+                     text="Do you want to install missing dependencies?",
+                     font=("Segoe UI", 10), bg=BG, fg=FG
+                     ).pack(anchor="w", pady=(0, 10))
+
+            btn_row = tk.Frame(self._action_frame, bg=BG)
+            btn_row.pack(anchor="w")
+
+            self._install_btn = tk.Button(
+                btn_row, text="Install",
+                command=self._install,
+                bg=ACCENT, fg=BG,
+                font=("Segoe UI", 10, "bold"),
+                relief="flat", padx=16, pady=6, cursor="hand2"
+            )
+            self._install_btn.pack(side="left", padx=(0, 8))
+
+            skip_label = "Skip" if self.checker.critical_failures else "Continue without"
+            tk.Button(btn_row, text=skip_label,
+                      command=self._skip,
+                      bg=BTN_BG, fg=FG,
+                      font=("Segoe UI", 10),
+                      relief="flat", padx=16, pady=6, cursor="hand2"
+                      ).pack(side="left")
+
+            # Progress / result label
+            self._progress_var = tk.StringVar()
+            self._progress_lbl = tk.Label(self._action_frame,
+                                          textvariable=self._progress_var,
+                                          font=("Segoe UI", 9), bg=BG, fg=FG_MUTED,
+                                          wraplength=360, justify="left")
+            self._progress_lbl.pack(anchor="w", pady=(8, 0))
+
+    def _install(self):
+        missing = self.checker.missing_pip_packages()
+        self._install_btn.configure(state="disabled", text="Installing…")
+        self._progress_var.set(f"Running pip install {' '.join(missing)} …")
+        self.update()
+
+        ok, output = _pip_install(missing)
+
+        # Re-check imports
+        self.checker.recheck()
+        self._render_list()
+
+        if self.checker.all_ok:
+            self._progress_var.set("✓  Installation successful!")
+            self._render_actions()   # will now show Continue button
+        else:
+            still = [d.display_name for d in self.checker.critical_failures]
+            self._progress_var.set(
+                f"Some packages could not be installed: {', '.join(still)}\n"
+                f"Try running:  pip install {' '.join(self.checker.missing_pip_packages())}"
+            )
+            if hasattr(self, '_install_btn') and self._install_btn.winfo_exists():
+                self._install_btn.configure(state="normal", text="Retry")
+
+    def _skip(self):
+        if self.checker.critical_failures:
+            self._cancel()
+        else:
+            self._ok()
+
+    def _ok(self):
+        self._on_ok()
+        if self.winfo_exists():
+            self.destroy()
+
+    def _cancel(self):
+        self._on_cancel()
+        if self.winfo_exists():
+            self.destroy()
+
+    def _center(self, parent):
+        self.update_idletasks()
+        px = parent.winfo_x() + parent.winfo_width()  // 2
+        py = parent.winfo_y() + parent.winfo_height() // 2
+        w  = self.winfo_reqwidth()
+        h  = self.winfo_reqheight()
+        self.geometry(f"+{px - w // 2}+{py - h // 2}")
+
 
 class DependencyStatusPanel(tk.Frame):
-    """
-    A collapsible panel shown inside the main window when optional
-    dependencies or non-critical system checks fail.
-    """
+    """Small panel inside the main window for optional-only failures."""
 
     def __init__(self, parent, checker: DependencyChecker, **kwargs):
-        super().__init__(parent, bg=BG, **kwargs)
+        super().__init__(parent, bg="#2a1f3d", **kwargs)
         self.checker = checker
         self._build()
 
     def _build(self):
-        issues = self.checker.optional_failures + [
-            c for c in self.checker.sys_failures if not c.required
-        ]
+        issues = self.checker.optional_failures
         if not issues:
             return
 
-        header = tk.Frame(self, bg="#2a1f3d", padx=12, pady=6)
-        header.pack(fill="x")
+        tk.Label(self, text="Optional dependencies:",
+                 font=("Segoe UI", 8, "bold"), bg="#2a1f3d", fg=WARN,
+                 padx=12, pady=4).pack(side="left")
 
-        tk.Label(header, text="⚠  Some optional features are unavailable",
-                 font=("Segoe UI", 9, "bold"), bg="#2a1f3d", fg=WARN
-                 ).pack(side="left")
+        for dep in issues:
+            tk.Label(self, text=f"{dep.display_name} — Missing",
+                     font=("Segoe UI", 8), bg="#2a1f3d", fg=WARN,
+                     padx=8).pack(side="left")
 
-        self._detail_visible = tk.BooleanVar(value=False)
-        tk.Checkbutton(header, text="Details", variable=self._detail_visible,
-                       command=self._toggle, bg="#2a1f3d", fg=FG_MUTED,
-                       selectcolor="#2a1f3d", activebackground="#2a1f3d",
-                       font=("Segoe UI", 8)
-                       ).pack(side="right")
-
-        self._detail_frame = tk.Frame(self, bg=BG_CARD)
-
-        for item in issues:
-            name = item.display_name if isinstance(item, Dep) else item.name
-            desc = item.description
-            fix  = (f"pip install {item.pip_package}"
-                    if isinstance(item, Dep) else item.fix_hint)
-
-            row = tk.Frame(self._detail_frame, bg=BG_CARD, padx=12, pady=4)
-            row.pack(fill="x")
-            tk.Label(row, text="○", fg=WARN, bg=BG_CARD,
-                     font=("Segoe UI", 10), width=2).pack(side="left")
-            info = tk.Frame(row, bg=BG_CARD)
-            info.pack(side="left", fill="x", expand=True)
-            tk.Label(info, text=name, fg=FG, bg=BG_CARD,
-                     font=("Segoe UI", 9, "bold"), anchor="w").pack(anchor="w")
-            tk.Label(info, text=desc, fg=FG_MUTED, bg=BG_CARD,
-                     font=("Segoe UI", 8), anchor="w").pack(anchor="w")
-            if fix:
-                tk.Label(info, text=f"Fix:  {fix}", fg=ACCENT, bg=BG_CARD,
-                         font=("Courier", 8), anchor="w",
-                         cursor="hand2").pack(anchor="w")
-
-    def _toggle(self):
-        if self._detail_visible.get():
-            self._detail_frame.pack(fill="x")
-        else:
-            self._detail_frame.pack_forget()
-
-
-# ── Main entry point ─────────────────────────────────────────────────────────
 
 def run_checks(root: tk.Tk) -> Optional[DependencyChecker]:
     """
-    Run all dependency checks.
-    - If critical failures exist: show blocking dialog, return None.
-    - Otherwise: return the checker (caller may show the status panel).
+    Run checks. Shows dialog if anything is missing.
+    Returns the checker on success, None if the user cancelled.
     """
     checker = DependencyChecker()
 
-    if checker.critical_failures or any(
-        c.required for c in checker.sys_failures
-    ):
-        dlg = DependencyErrorDialog(root, checker)
-        root.wait_window(dlg)
-        return None   # caller should check if root still exists
+    if checker.all_ok and not checker.optional_failures:
+        return checker   # silent pass-through
+
+    result = {"ok": False}
+
+    def on_ok():
+        result["ok"] = True
+
+    def on_cancel():
+        result["ok"] = False
+
+    dlg = DependencyDialog(root, checker, on_ok=on_ok, on_cancel=on_cancel)
+    root.wait_window(dlg)
+
+    if not result["ok"]:
+        root.destroy()
+        return None
 
     return checker
