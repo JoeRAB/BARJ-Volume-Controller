@@ -90,6 +90,17 @@ class MainWindow(tk.Tk):
         self._tray_available = self._tray.start()
         self.protocol("WM_DELETE_WINDOW", self._on_window_close)
 
+        # Drive the tray's GTK loop from tkinter so AppIndicator menu
+        # clicks register on Linux. No-op on other backends/platforms.
+        self._pump_tray()
+
+    def _pump_tray(self):
+        try:
+            self._tray.pump()
+        except Exception:
+            pass
+        self.after(100, self._pump_tray)
+
     # ================================================================== #
     # Theme                                                                #
     # ================================================================== #
@@ -198,7 +209,12 @@ class MainWindow(tk.Tk):
         self._profile_combo.pack(side="left")
         self._profile_combo.bind("<<ComboboxSelected>>", self._on_profile_selected)
 
-        for txt, cmd in [("＋", self._add_profile), ("－", self._delete_profile)]:
+        for txt, cmd, tip in [
+            ("＋", self._add_profile,    "New profile"),
+            ("✎", self._rename_profile, "Rename profile"),
+            ("⧉", self._save_as_profile,"Save as / duplicate"),
+            ("－", self._delete_profile, "Delete profile"),
+        ]:
             tk.Button(pf, text=txt, command=cmd,
                       bg=T.btn_bg, fg=T.fg_muted, relief="flat",
                       font=F.small_b, padx=6, pady=4,
@@ -291,6 +307,48 @@ class MainWindow(tk.Tk):
             return
         self._refresh_profile_list()
         self._load_profile(self.config_mgr.current_profile)
+
+    def _rename_profile(self):
+        old = self._profile_var.get()
+        new = simpledialog.askstring(
+            "Rename Profile", "New name:",
+            initialvalue=old, parent=self)
+        if not new or not new.strip():
+            return
+        new = new.strip()
+        if new == old:
+            return
+        if not self.config_mgr.rename_profile(old, new):
+            messagebox.showwarning(
+                "Cannot Rename",
+                f"A profile named '{new}' already exists.", parent=self)
+            return
+        self._refresh_profile_list()
+        self._load_profile(self.config_mgr.current_profile)
+
+    def _save_as_profile(self):
+        """Duplicate the current profile's assignments under a new name."""
+        # Capture the live slider assignments first
+        self._save_assignments()
+        src = self._profile_var.get()
+        new = simpledialog.askstring(
+            "Save As", "Save current profile as:",
+            initialvalue=f"{src} copy", parent=self)
+        if not new or not new.strip():
+            return
+        new = new.strip()
+        if new in self.config_mgr.get_profile_names():
+            messagebox.showwarning(
+                "Name In Use",
+                f"A profile named '{new}' already exists.", parent=self)
+            return
+        # Create the new profile, copy assignments into it, switch to it
+        assignments = self.config_mgr.get_profile_assignments(src)
+        self.config_mgr.add_profile(new)
+        self.config_mgr.set_profile_assignments(assignments, new)
+        self.config_mgr.current_profile = new
+        self._refresh_profile_list()
+        self._load_profile(new)
 
     # ================================================================== #
     # App detection                                                        #
