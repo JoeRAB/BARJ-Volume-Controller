@@ -170,15 +170,21 @@ step_venv() {
     local install_dir="$1"
     info "Creating Python virtual environment…"
     [[ -d "$install_dir/venv" ]] && rm -rf "$install_dir/venv"
-    if ! "$PYTHON_BIN" -m venv "$install_dir/venv" 2>/dev/null; then
+
+    # --system-site-packages lets the venv import the apt-installed GTK /
+    # AppIndicator bindings (python3-gi, gir1.2-ayatana-appindicator3-0.1).
+    # Without this, pystray can't load its AppIndicator backend and falls
+    # back to the unresponsive _xorg backend, so the tray icon does nothing.
+    if ! "$PYTHON_BIN" -m venv --system-site-packages "$install_dir/venv" 2>/dev/null; then
         local py_ver
         py_ver=$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
         warn "Trying python${py_ver}-venv…"
         [[ "$(detect_pkg_mgr)" == "apt" ]] \
             && sudo apt-get install -y "python${py_ver}-venv" -qq
-        "$PYTHON_BIN" -m venv "$install_dir/venv" || die "Cannot create venv."
+        "$PYTHON_BIN" -m venv --system-site-packages "$install_dir/venv" \
+            || die "Cannot create venv."
     fi
-    success "Venv ready."
+    success "Venv ready (with system site packages for tray support)."
 }
 
 step_pip() {

@@ -1,12 +1,15 @@
 """
 tray_icon.py — BARJ Volume Controller system tray icon
 
-Desktop environment notes:
-  Cinnamon / XFCE / KDE / MATE — works out of the box
-  GNOME                         — requires 'AppIndicator and KStatusNotifierItem
-                                  Support' extension (extensions.gnome.org/extension/615)
-  Windows                       — works out of the box
-  Headless / no display         — gracefully disabled
+Linux note:
+  On GTK desktops (Cinnamon/Mint, GNOME, etc.) pystray's AppIndicator
+  backend needs GTK's main loop to be pumped. tkinter owns the main thread,
+  so instead of pystray.run_detached() (which starts its own thread and
+  leaves AppIndicator callbacks dead), we drive GTK iterations from tkinter's
+  event loop via the `pump()` method, called periodically by the main window.
+
+  If GTK isn't available we fall back to pystray.run_detached() (works for
+  the _xorg / Windows / macOS backends).
 """
 
 import logging
@@ -23,6 +26,16 @@ try:
 except ImportError:
     TRAY_AVAILABLE = False
     logger.warning("pystray / Pillow not installed — tray icon disabled.")
+
+# Try to grab GTK for the main-thread pump approach (Linux GTK desktops)
+_GTK = None
+if TRAY_AVAILABLE and platform.system() == "Linux":
+    try:
+        import gi
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import Gtk as _GTK  # type: ignore
+    except Exception:
+        _GTK = None
 
 
 def _current_desktop() -> str:
@@ -55,6 +68,14 @@ def _make_icon_image(size: int = 64) -> "Image.Image":
 
 
 class TrayIcon:
+    """
+    Parameters
+    ----------
+    on_show_hide, on_show, on_hide, on_quit : callbacks (no args)
+        These are invoked from the GTK/tray thread, so they should be
+        thread-safe. In this app they call tk's .after(0, ...) internally.
+    """
+
     def __init__(self, on_show_hide: Callable, on_quit: Callable,
                  on_show: Callable = None, on_hide: Callable = None):
         self._on_show_hide = on_show_hide
@@ -62,47 +83,77 @@ class TrayIcon:
         self._on_show      = on_show or on_show_hide
         self._on_hide      = on_hide or on_show_hide
         self._icon: Optional["pystray.Icon"] = None
-        self._gnome        = "gnome" in _current_desktop()
+        self._gnome   = "gnome" in _current_desktop()
+        self._use_gtk_pump = False   # True when we drive GTK ourselves
+
+    # ------------------------------------------------------------------ #
+
+    def _build_menu(self):
+        return pystray.Menu(
+            pystray.MenuItem("Show BARJ Volume Controller", self._show),
+            pystray.MenuItem("Hide", self._hide),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quit", self._quit),
+        )
 
     def start(self) -> bool:
         if not TRAY_AVAILABLE:
             return False
         if not _is_display_available():
+            logger.info("No display — tray disabled.")
             return False
         if self._gnome:
             logger.warning(
-                "GNOME detected — tray icon requires the "
+                "GNOME detected — tray icon needs the "
                 "'AppIndicator and KStatusNotifierItem Support' extension: "
-                "https://extensions.gnome.org/extension/615/"
-            )
+                "https://extensions.gnome.org/extension/615/")
+
         try:
-            # NOTE: do NOT set default=True on any item. On the AppIndicator
-            # backend (used by Cinnamon/Mint) a 'default' item replaces the
-            # whole menu with a single click action, so right-click shows
-            # nothing. Without it, clicking the icon opens the full menu.
-            menu = pystray.Menu(
-                pystray.MenuItem("Show BARJ Volume Controller", self._show),
-                pystray.MenuItem("Hide", self._hide),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Quit", self._quit),
-            )
             self._icon = pystray.Icon(
                 name ="BARJVolumeController",
                 icon =_make_icon_image(),
                 title="BARJ Volume Controller",
-                menu =menu,
+                menu =self._build_menu(),
             )
-
-            # Log which backend pystray picked — useful for diagnosing tray issues
             backend = type(self._icon).__module__
             logger.info(f"Tray backend: {backend}")
 
+            if backend.endswith("_xorg"):
+                logger.warning(
+                    "Tray using the _xorg fallback backend, which is "
+                    "unresponsive on most desktops. This means the GTK/"
+                    "AppIndicator bindings aren't importable in the venv. "
+                    "Reinstall so the venv is created with "
+                    "--system-site-packages.")
+
+            # pystray's run_detached() starts the backend's own loop in a
+            # thread. For AppIndicator this works ONLY if GObject's loop gets
+            # pumped; we additionally pump GTK from tkinter (see pump()).
+            if _GTK is not None and "appindicator" in backend.lower():
+                self._use_gtk_pump = True
+
             self._icon.run_detached()
-            logger.info("System tray icon started.")
+            logger.info(f"Tray started (gtk_pump={self._use_gtk_pump}).")
             return True
+
         except Exception as e:
             logger.warning(f"Tray icon failed to start: {e}")
             return False
+
+    def pump(self):
+        """
+        Called periodically from the tkinter main loop (via after()).
+        Drives pending GTK events so AppIndicator menu callbacks fire on
+        the main thread. No-op when not in GTK pump mode.
+        """
+        if not self._use_gtk_pump or _GTK is None:
+            return
+        try:
+            # Process all pending GTK events without blocking
+            while _GTK.events_pending():
+                _GTK.main_iteration_do(False)
+        except Exception as e:
+            logger.debug(f"GTK pump error: {e}")
 
     def stop(self):
         if self._icon:
@@ -117,6 +168,8 @@ class TrayIcon:
                 self._icon.notify(message, title)
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------ #
 
     def _show(self, icon, item):
         self._on_show()
