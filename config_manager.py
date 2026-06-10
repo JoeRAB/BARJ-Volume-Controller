@@ -28,6 +28,8 @@ DEFAULT_CONFIG = {
     },
     "ui": {
         "show_connecting_on_launch": True,   # show connecting dialog when app starts
+        "theme": "auto",          # "auto" | "dark" | "light"
+        "close_action": "ask",    # "ask" | "tray" | "quit"
     },
     "profiles": {
         "Default": [
@@ -39,9 +41,6 @@ DEFAULT_CONFIG = {
         ]
     },
     "current_profile": "Default",
-    "ui": {
-        "theme": "auto",    # "auto" | "dark" | "light"
-    },
 }
 
 
