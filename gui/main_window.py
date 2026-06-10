@@ -241,10 +241,10 @@ class MainWindow(tk.Tk):
         tk.Frame(bar, bg=T.separator, height=1).place(relx=0, rely=0,
                                                        relwidth=1, anchor="nw")
         self._status_dot = tk.Label(bar, text="●", bg=T.status_bg,
-                                     fg=T.warn, font=F.tiny)
+                                     fg=T.err, font=F.tiny)
         self._status_dot.pack(side="left", padx=(12, 2))
         self._status_label = tk.Label(bar, text="Connecting…",
-                                       bg=T.status_bg, fg=T.warn, font=F.tiny)
+                                       bg=T.status_bg, fg=T.err, font=F.tiny)
         self._status_label.pack(side="left")
 
         cfg = str(self.config_mgr.config_path)
@@ -406,6 +406,11 @@ class MainWindow(tk.Tk):
         self.after(0, lambda e=err: self._show_error(e))
 
     def _show_error(self, err: SerialError):
+        # "Cannot connect" is communicated by the red status bar, not a
+        # popup — only show dialogs for parse/disconnect faults that point
+        # to a wiring or hardware problem worth the user's attention.
+        if err.kind == SerialError.CONNECT:
+            return
         if self._error_dialog_active:
             return
         self._error_dialog_active = True
@@ -448,8 +453,8 @@ class MainWindow(tk.Tk):
                 self._connecting_dialog.notify_connected()
             self._was_connected = True
         else:
-            self._status_dot.config(fg=T.warn)
-            self._status_label.config(text=f"Connecting…  ({port})", fg=T.warn)
+            self._status_dot.config(fg=T.err)
+            self._status_label.config(text=f"Not connected  ({port})", fg=T.err)
             if self._was_connected:
                 self._was_connected = False
                 if self._reconnect_job:
