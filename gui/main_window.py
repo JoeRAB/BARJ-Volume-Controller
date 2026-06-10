@@ -222,6 +222,7 @@ class MainWindow(tk.Tk):
 
         for txt, cmd, tip in [
             ("＋", self._add_profile,    "Create a new empty profile"),
+            ("💾", self._save_profile,   "Save the current profile"),
             ("✎", self._rename_profile, "Rename the current profile"),
             ("⧉", self._save_as_profile,"Save current profile under a new name"),
             ("－", self._delete_profile, "Delete the current profile"),
@@ -295,6 +296,14 @@ class MainWindow(tk.Tk):
         self.config_mgr.set_profile_assignments([
             {"target": p.get_target(), "label": f"Slider {p.index+1}"}
             for p in self._slider_panels])
+
+    def _save_profile(self):
+        """Explicitly save the current slider setup to the active profile."""
+        self._save_assignments()
+        name = self.config_mgr.current_profile
+        # Brief confirmation in the status bar
+        self._status_label.config(text=f"Profile '{name}' saved", fg=T.ok)
+        self.after(2000, self._check_connection)
 
     def _on_profile_selected(self, _=None):
         name = self._profile_var.get()
