@@ -34,6 +34,11 @@ class MainWindow(tk.Tk):
         self.title(APP_TITLE)
         self.resizable(True, False)
 
+        # Catch any exception raised inside a tkinter callback (e.g. while
+        # applying a slider value) so a transient glitch from a bad solder
+        # joint logs an error instead of tearing down the whole app.
+        self.report_callback_exception = self._on_tk_exception
+
         # ---- Load theme preference before anything draws ----
         self.config_mgr = ConfigManager()
         theme_pref = self.config_mgr.get("ui", "theme", default="auto")
@@ -509,3 +514,13 @@ class MainWindow(tk.Tk):
         if self.detector:      self.detector.stop()
         self._tray.stop()
         self.destroy()
+
+    def _on_tk_exception(self, exc_type, exc_value, exc_tb):
+        """
+        Last-resort handler for exceptions raised inside tkinter callbacks.
+        Logs the error and keeps the app alive instead of crashing. This is
+        what stops a transient bad-solder glitch from taking the app down.
+        """
+        import traceback
+        logger.error("Unhandled GUI callback error (recovered):\n" +
+                     "".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
