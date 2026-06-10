@@ -316,14 +316,18 @@ do_install() {
     say "  ${BOLD}Install location:${RESET}  ${CYAN}$install_dir${RESET}"
     say "  ${BOLD}Config location:${RESET}   ${CYAN}$CONFIG_DIR/config.yaml${RESET}"
     blank
-    read -rp "$(echo -e "${BOLD}Proceed with installation? [Y/n]: ${RESET}")" ans
-    blank
-    case "${ans,,}" in
-        n|no) say "${YELLOW}Installation cancelled. No changes made.${RESET}"; exit 0 ;;
-    esac
 
     NEEDS_RELOGIN=false
-    mkdir -p "$install_dir"
+    if ! mkdir -p "$install_dir" 2>/dev/null; then
+        die "Cannot create '$install_dir' (permission denied).
+       Choose a location inside your home folder, or pre-create it with sudo
+       and give yourself ownership:  sudo mkdir -p '$install_dir' && sudo chown \$USER '$install_dir'"
+    fi
+    if [[ ! -w "$install_dir" ]]; then
+        die "'$install_dir' is not writable by your user.
+       Pick a path in your home folder, or fix ownership:
+       sudo chown -R \$USER '$install_dir'"
+    fi
 
     step_system_packages "$pkg_mgr"
     step_venv            "$install_dir"
@@ -478,6 +482,38 @@ ask_for_custom_path() {
     fi
 }
 
+# Prompt for a custom directory to INSTALL into (new install).
+# Sets the global `install_target` on success; returns 1 if cancelled.
+ask_for_install_path() {
+    blank
+    say "  ${BOLD}Enter the directory to install BARJ Volume Controller into.${RESET}"
+    say "  The folder will be created if it doesn't exist."
+    say "  Example:  /opt/barj   or   ~/apps/barj-volume-controller"
+    say "  (Press Tab to autocomplete the path)"
+    blank
+    read -rep "$(echo -e "${BOLD}Install path: ${RESET}")" install_target
+    blank
+
+    # Expand ~ if entered
+    install_target="${install_target/#\~/$HOME}"
+
+    if [[ -z "$install_target" ]]; then
+        say "${YELLOW}No path entered. Returning to menu.${RESET}"
+        return 1
+    fi
+
+    # Warn if an install already exists there
+    if is_install "$install_target"; then
+        warn "An installation already exists at: $install_target"
+        read -rp "$(echo -e "${BOLD}Update it instead of reinstalling? [Y/n]: ${RESET}")" ans_up
+        case "${ans_up,,}" in
+            n|no) : ;;                                  # fall through to install
+            *)    do_update "$install_target"; exit 0 ;;
+        esac
+    fi
+    return 0
+}
+
 main() {
     clear
     blank
@@ -521,10 +557,11 @@ main() {
         say "  What would you like to do?"
         blank
         say "    1)  Install  (to $DEFAULT_INSTALL_DIR)"
-        say "    2)  Provide a path to an existing installation"
-        say "    3)  Cancel"
+        say "    2)  Install to a custom location"
+        say "    3)  Provide a path to an existing installation"
+        say "    4)  Cancel"
         blank
-        read -rp "$(echo -e "${BOLD}Enter choice [1/2/3]: ${RESET}")" choice
+        read -rp "$(echo -e "${BOLD}Enter choice [1/2/3/4]: ${RESET}")" choice
         blank
 
         case "$choice" in
@@ -532,6 +569,11 @@ main() {
                 do_install "$DEFAULT_INSTALL_DIR"
                 ;;
             2)
+                if ask_for_install_path; then
+                    do_install "$install_target"
+                fi
+                ;;
+            3)
                 if ask_for_custom_path; then
                     # ask_for_custom_path sets custom_path if found
                     blank
@@ -551,7 +593,7 @@ main() {
                     esac
                 fi
                 ;;
-            3)
+            4)
                 say "Cancelled."
                 exit 0
                 ;;
