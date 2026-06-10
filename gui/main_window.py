@@ -11,7 +11,7 @@ from config_manager import ConfigManager
 from serial_reader import SerialReader, SerialError
 from app_detector import AppDetector
 from audio import get_audio_controller
-from gui.theme import T, F
+from gui.theme import T, F, Tooltip
 from gui.slider_panel import SliderPanel
 from gui.settings_dialog import SettingsDialog
 from gui.connecting_dialog import ConnectingDialog
@@ -168,7 +168,7 @@ class MainWindow(tk.Tk):
                  ).pack(side="left")
 
         # Right side buttons (right-to-left order)
-        def hdr_btn(parent, text, cmd, primary=False):
+        def hdr_btn(parent, text, cmd, primary=False, tip=None):
             bg = T.btn_primary if primary else T.btn_bg
             fg = T.btn_primary_fg if primary else T.btn_fg
             b = tk.Button(parent, text=text, command=cmd,
@@ -178,10 +178,14 @@ class MainWindow(tk.Tk):
                           activebackground=T.bg_elevated,
                           activeforeground=T.fg)
             b.pack(side="right", padx=3)
+            if tip:
+                Tooltip(b, tip)
             return b
 
-        hdr_btn(inner, "✕  Quit", self._quit_app)
-        hdr_btn(inner, "⚙  Settings", self._open_settings)
+        hdr_btn(inner, "✕  Quit", self._quit_app,
+                tip="Quit the application")
+        hdr_btn(inner, "⚙  Settings", self._open_settings,
+                tip="Serial port, slider count, smoothing")
 
         # Theme toggle
         self._theme_btn = tk.Button(
@@ -191,6 +195,7 @@ class MainWindow(tk.Tk):
             cursor="hand2",
             activebackground=T.bg_elevated, activeforeground=T.fg)
         self._theme_btn.pack(side="right", padx=3)
+        Tooltip(self._theme_btn, "Switch between light and dark mode")
 
         # Profile selector
         sep = tk.Frame(inner, bg=T.separator, width=1)
@@ -208,19 +213,21 @@ class MainWindow(tk.Tk):
                                            font=F.small)
         self._profile_combo.pack(side="left")
         self._profile_combo.bind("<<ComboboxSelected>>", self._on_profile_selected)
+        Tooltip(self._profile_combo, "Switch between saved slider profiles")
 
         for txt, cmd, tip in [
-            ("＋", self._add_profile,    "New profile"),
-            ("✎", self._rename_profile, "Rename profile"),
-            ("⧉", self._save_as_profile,"Save as / duplicate"),
-            ("－", self._delete_profile, "Delete profile"),
+            ("＋", self._add_profile,    "Create a new empty profile"),
+            ("✎", self._rename_profile, "Rename the current profile"),
+            ("⧉", self._save_as_profile,"Save current profile under a new name"),
+            ("－", self._delete_profile, "Delete the current profile"),
         ]:
-            tk.Button(pf, text=txt, command=cmd,
-                      bg=T.btn_bg, fg=T.fg_muted, relief="flat",
-                      font=F.small_b, padx=6, pady=4,
-                      cursor="hand2",
-                      activebackground=T.bg_elevated
-                      ).pack(side="left", padx=1)
+            b = tk.Button(pf, text=txt, command=cmd,
+                          bg=T.btn_bg, fg=T.fg_muted, relief="flat",
+                          font=F.small_b, padx=6, pady=4,
+                          cursor="hand2",
+                          activebackground=T.bg_elevated)
+            b.pack(side="left", padx=1)
+            Tooltip(b, tip)
 
         self._refresh_profile_list()
 

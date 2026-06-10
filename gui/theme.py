@@ -153,3 +153,78 @@ class ThemeManager:
         except AttributeError: raise AttributeError(f"Theme has no attribute '{item}'")
 
 T = ThemeManager()
+
+
+# ── Tooltip ───────────────────────────────────────────────────────────────────
+import tkinter as _tk
+
+
+class Tooltip:
+    """
+    Lightweight hover tooltip for any tkinter widget.
+
+    Usage:
+        Tooltip(my_button, "Delete the current profile")
+
+    Appears after `delay` ms of hovering, disappears on leave/click.
+    Re-reads theme colours each time it shows, so it follows light/dark mode.
+    """
+
+    def __init__(self, widget, text: str, delay: int = 600):
+        self.widget = widget
+        self.text   = text
+        self.delay  = delay
+        self._after_id = None
+        self._tip = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide,     add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None):
+        self._cancel()
+        self._after_id = self.widget.after(self.delay, self._show)
+
+    def _cancel(self):
+        if self._after_id:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
+    def _show(self):
+        if self._tip or not self.text:
+            return
+        # Position just below the widget
+        try:
+            x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        except Exception:
+            return
+
+        self._tip = _tk.Toplevel(self.widget)
+        self._tip.wm_overrideredirect(True)      # no window border
+        self._tip.wm_attributes("-topmost", True)
+
+        frame = _tk.Frame(self._tip, bg=T.border, padx=1, pady=1)
+        frame.pack()
+        label = _tk.Label(
+            frame, text=self.text,
+            bg=T.bg_elevated, fg=T.fg,
+            font=F.tiny, padx=8, pady=4,
+            justify="left", wraplength=260)
+        label.pack()
+
+        # Center horizontally on the widget
+        self._tip.update_idletasks()
+        w = self._tip.winfo_width()
+        self._tip.wm_geometry(f"+{x - w // 2}+{y}")
+
+    def _hide(self, _event=None):
+        self._cancel()
+        if self._tip:
+            try:
+                self._tip.destroy()
+            except Exception:
+                pass
+            self._tip = None
