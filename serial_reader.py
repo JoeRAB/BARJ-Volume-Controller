@@ -191,7 +191,13 @@ class SerialReader:
 
                     line = raw_bytes.decode("utf-8", errors="replace").strip()
                     if line:
-                        self._parse_and_emit(line)
+                        try:
+                            self._parse_and_emit(line)
+                        except Exception as e:
+                            # Never let a parsing/processing error kill the
+                            # reader thread — log it and keep reading. A bad
+                            # solder joint will recover on the next good line.
+                            logger.error(f"Error processing line {line!r}: {e}")
 
             except serial.SerialException as e:
                 self._report_error(SerialError(
