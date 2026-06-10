@@ -76,8 +76,12 @@ class TrayIcon:
                 "https://extensions.gnome.org/extension/615/"
             )
         try:
+            # NOTE: do NOT set default=True on any item. On the AppIndicator
+            # backend (used by Cinnamon/Mint) a 'default' item replaces the
+            # whole menu with a single click action, so right-click shows
+            # nothing. Without it, clicking the icon opens the full menu.
             menu = pystray.Menu(
-                pystray.MenuItem("Show", self._show, default=True),
+                pystray.MenuItem("Show BARJ Volume Controller", self._show),
                 pystray.MenuItem("Hide", self._hide),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Quit", self._quit),
@@ -88,6 +92,11 @@ class TrayIcon:
                 title="BARJ Volume Controller",
                 menu =menu,
             )
+
+            # Log which backend pystray picked — useful for diagnosing tray issues
+            backend = type(self._icon).__module__
+            logger.info(f"Tray backend: {backend}")
+
             self._icon.run_detached()
             logger.info("System tray icon started.")
             return True

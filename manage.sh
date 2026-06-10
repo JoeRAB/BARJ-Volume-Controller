@@ -75,14 +75,26 @@ try_pkg() {
     esac
 }
 
-# Check if a Python package is importable
-pip_check() { "$PYTHON_BIN" -c "import $1" 2>/dev/null; }
+# Check if a Python package is importable.
+# Prefer the existing venv's Python (that's where the app actually runs);
+# fall back to system Python only if no venv is present yet.
+pip_check() {
+    local py="$PYTHON_BIN"
+    if [[ -n "${CHECK_DIR:-}" ]] && [[ -x "$CHECK_DIR/venv/bin/python" ]]; then
+        py="$CHECK_DIR/venv/bin/python"
+    fi
+    "$py" -c "import $1" 2>/dev/null
+}
 
 # =============================================================================
 # DEP CHECK  (shared by install and update)
 # =============================================================================
 
 run_dep_check() {
+    # When updating an existing install, check the venv where the app
+    # actually runs (not system Python). Pass the install dir in.
+    CHECK_DIR="${1:-}"
+
     # Populate arrays in caller's scope
     DEP_NAMES=(  "pyserial"  "PyYAML"  "pulsectl"  "pystray"  "Pillow" )
     DEP_IMPORTS=( "serial"   "yaml"    "pulsectl"  "pystray"  "PIL"    )
@@ -132,12 +144,17 @@ step_system_packages() {
             try_pkg apt python3-tk
             try_pkg apt python3-gi
             try_pkg apt gir1.2-gtk-3.0
+            # Install AppIndicator GObject bindings. pystray's backend
+            # prefers ayatana; we install whatever apt offers (both if available)
+            # so the tray menu works across Cinnamon/XFCE/MATE/KDE.
             local found_indicator=false
-            for pkg in gir1.2-ayatana-appindicator3-0.1 gir1.2-appindicator3-0.1; do
+            for pkg in gir1.2-ayatana-appindicator3-0.1 \
+                       gir1.2-appindicator3-0.1 \
+                       libayatana-appindicator3-1; do
                 if apt-cache show "$pkg" &>/dev/null 2>&1; then
                     sudo apt-get install -y "$pkg" -qq \
                         && echo -e "    ${GREEN}✓${RESET} $pkg" \
-                        && found_indicator=true && break
+                        && found_indicator=true
                 fi
             done
             $found_indicator || echo -e "    ${YELLOW}⊘${RESET} AppIndicator (not found — tray may not show on all desktops)"
@@ -287,7 +304,7 @@ do_install() {
     [[ "$major" -lt 3 || ( "$major" -eq 3 && "$minor" -lt 10 ) ]] \
         && die "Python 3.10+ required (found $py_ver)."
 
-    run_dep_check
+    run_dep_check "$install_dir"
 
     blank
     say "  ${BOLD}Install location:${RESET}  ${CYAN}$install_dir${RESET}"
@@ -326,7 +343,7 @@ do_update() {
     fi
     blank
 
-    run_dep_check
+    run_dep_check "$install_dir"
 
     blank
     read -rp "$(echo -e "${BOLD}Proceed with update? [Y/n]: ${RESET}")" ans
@@ -350,11 +367,26 @@ do_update() {
 do_uninstall() {
     local install_dir="$1"
 
+    # Build the full list of locations to remove. We always clean BOTH the
+    # passed-in install dir AND the default location, so no stray folders are
+    # ever left behind (which previously caused false "update" detection).
+    local -a remove_dirs=()
+    local -a remove_files=()
+
+    # App directories (dedupe default + custom)
+    remove_dirs+=("$DEFAULT_INSTALL_DIR")
+    if [[ "$install_dir" != "$DEFAULT_INSTALL_DIR" ]]; then
+        remove_dirs+=("$install_dir")
+    fi
+
+    # Launcher + desktop entry
+    remove_files+=("$BIN_DIR/$APP_NAME")
+    remove_files+=("$DESKTOP_DIR/$APP_NAME.desktop")
+
     blank
     say "${BOLD}The following will be removed:${RESET}"
-    say "  ${CYAN}$install_dir${RESET}"
-    say "  ${CYAN}$BIN_DIR/$APP_NAME${RESET}"
-    say "  ${CYAN}$DESKTOP_DIR/$APP_NAME.desktop${RESET}"
+    for d in "${remove_dirs[@]}";  do [[ -e "$d" ]] && say "  ${CYAN}$d${RESET}"; done
+    for f in "${remove_files[@]}"; do [[ -e "$f" ]] && say "  ${CYAN}$f${RESET}"; done
     blank
 
     local del_config="n"
@@ -373,12 +405,24 @@ do_uninstall() {
         *) say "Uninstall cancelled."; exit 0 ;;
     esac
 
-    [[ -d "$install_dir" ]]                     && rm -rf "$install_dir"       && success "Removed: $install_dir"
-    [[ -f "$BIN_DIR/$APP_NAME" ]]               && rm -f  "$BIN_DIR/$APP_NAME" && success "Removed: $BIN_DIR/$APP_NAME"
-    [[ -f "$DESKTOP_DIR/$APP_NAME.desktop" ]]   && rm -f  "$DESKTOP_DIR/$APP_NAME.desktop" && success "Removed: .desktop entry"
+    # Remove all app directories
+    for d in "${remove_dirs[@]}"; do
+        if [[ -d "$d" ]]; then
+            rm -rf "$d" && success "Removed: $d"
+        fi
+    done
+
+    # Remove all files
+    for f in "${remove_files[@]}"; do
+        if [[ -e "$f" ]]; then
+            rm -f "$f" && success "Removed: $f"
+        fi
+    done
+
     command -v update-desktop-database &>/dev/null \
         && update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
 
+    # Config — only if explicitly requested
     if [[ "${del_config,,}" == "y" ]]; then
         [[ -d "$CONFIG_DIR" ]] && rm -rf "$CONFIG_DIR" && success "Removed: $CONFIG_DIR"
     else
@@ -389,7 +433,7 @@ do_uninstall() {
     fi
 
     blank
-    say "${BOLD}${GREEN}BARJ Volume Controller has been uninstalled.${RESET}"
+    say "${BOLD}${GREEN}BARJ Volume Controller has been fully uninstalled.${RESET}"
     blank
 }
 
