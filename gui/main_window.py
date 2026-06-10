@@ -14,7 +14,6 @@ from audio import get_audio_controller
 from gui.theme import T, F
 from gui.slider_panel import SliderPanel
 from gui.settings_dialog import SettingsDialog
-from gui.dependency_check import run_checks
 from gui.connecting_dialog import ConnectingDialog
 from gui.error_dialog import ErrorDialog
 from tray_icon import TrayIcon
@@ -41,10 +40,16 @@ class MainWindow(tk.Tk):
         T.apply(theme_pref)
         self.configure(bg=T.bg_root)
 
-        # ---- Dependency check ----
-        checker = run_checks(self)
-        if checker is None:
-            return
+        # ---- Dependency check (silent unless a REQUIRED dep is missing) ----
+        from gui.dependency_check import DependencyChecker, DependencyDialog
+        checker = DependencyChecker()
+        if checker.missing_required:
+            # App genuinely can't run — show the dialog so the user can install
+            dlg = DependencyDialog(self, checker)
+            self.wait_window(dlg)
+            if not (dlg.proceed or checker.all_ok):
+                self.destroy()
+                return
 
         # ---- Audio ----
         try:
@@ -79,10 +84,11 @@ class MainWindow(tk.Tk):
 
         # ---- Tray ----
         self._tray = TrayIcon(on_show_hide=self._toggle_window,
-                              on_quit=self._quit_app)
+                              on_quit=self._quit_app,
+                              on_show=self._show_window,
+                              on_hide=self._hide_window)
         self._tray_available = self._tray.start()
         self.protocol("WM_DELETE_WINDOW", self._on_window_close)
-        self.after(1200, self._maybe_show_connecting)
 
     # ================================================================== #
     # Theme                                                                #
@@ -345,10 +351,6 @@ class MainWindow(tk.Tk):
     # Connecting dialog                                                    #
     # ================================================================== #
 
-    def _maybe_show_connecting(self):
-        if self.serial_reader and not self.serial_reader.connected:
-            self._show_connecting_dialog()
-
     def _show_connecting_dialog(self):
         if self._connecting_dialog and self._connecting_dialog.winfo_exists():
             self._connecting_dialog.show_reconnecting()
@@ -414,6 +416,12 @@ class MainWindow(tk.Tk):
     def _toggle_window(self):
         self.after(0, lambda: self.withdraw() if self.winfo_viewable()
                    else (self.deiconify(), self.lift(), self.focus_force()))
+
+    def _show_window(self):
+        self.after(0, lambda: (self.deiconify(), self.lift(), self.focus_force()))
+
+    def _hide_window(self):
+        self.after(0, self.withdraw)
 
     def _on_window_close(self):
         if self._tray_available:
