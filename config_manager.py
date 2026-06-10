@@ -1,12 +1,11 @@
 """
-config_manager.py
+config_manager.py — BARJ Volume Controller
 
-Config is stored in the user's config directory — completely separate from
-the install location, so updates never touch it:
-
+Config stored at:
   Linux:   ~/.config/barj-volume-controller/config.yaml
-           (or $XDG_CONFIG_HOME/barj-volume-controller/config.yaml)
   Windows: %APPDATA%/BARJ Volume Controller/config.yaml
+
+Never modified by the installer — safe across updates.
 """
 
 import os
@@ -27,34 +26,33 @@ DEFAULT_CONFIG = {
         "count": 5,
         "smoothing": 0.15,
     },
+    "ui": {
+        "show_connecting_on_launch": True,   # show connecting dialog when app starts
+    },
     "profiles": {
         "Default": [
-            {"target": "master", "label": "Master"},
-            {"target": "",       "label": "Slider 2"},
-            {"target": "",       "label": "Slider 3"},
-            {"target": "",       "label": "Slider 4"},
-            {"target": "",       "label": "Slider 5"},
+            {"target": "master",     "label": "Master"},
+            {"target": "all_others", "label": "All Others"},
+            {"target": "",           "label": "Slider 3"},
+            {"target": "",           "label": "Slider 4"},
+            {"target": "",           "label": "Slider 5"},
         ]
     },
     "current_profile": "Default",
+    "ui": {
+        "theme": "auto",    # "auto" | "dark" | "light"
+    },
 }
 
 
 def get_config_path() -> Path:
-    """
-    Returns the platform-appropriate config file path and ensures
-    the parent directory exists.  This location is NEVER touched by
-    the installer, so config survives reinstalls and updates.
-    """
     system = platform.system()
     if system == "Windows":
         base = Path(os.environ.get("APPDATA", Path.home()))
         config_dir = base / "BARJ Volume Controller"
     else:
-        # Respect XDG Base Directory spec
-        xdg_config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        config_dir = xdg_config / "barj-volume-controller"
-
+        xdg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+        config_dir = xdg / "barj-volume-controller"
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir / "config.yaml"
 
@@ -65,10 +63,6 @@ class ConfigManager:
         self.config: dict = {}
         self.load()
         logger.info(f"Config: {self.config_path}")
-
-    # ------------------------------------------------------------------ #
-    # Load / Save                                                          #
-    # ------------------------------------------------------------------ #
 
     def load(self):
         if self.config_path.exists():
@@ -99,10 +93,6 @@ class ConfigManager:
                 result[k] = v
         return result
 
-    # ------------------------------------------------------------------ #
-    # Generic get / set                                                    #
-    # ------------------------------------------------------------------ #
-
     def get(self, *keys, default=None):
         val = self.config
         for k in keys:
@@ -118,10 +108,6 @@ class ConfigManager:
             d = d.setdefault(k, {})
         d[keys[-1]] = value
         self.save()
-
-    # ------------------------------------------------------------------ #
-    # Profile helpers                                                      #
-    # ------------------------------------------------------------------ #
 
     @property
     def current_profile(self) -> str:

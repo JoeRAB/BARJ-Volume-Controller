@@ -1,18 +1,14 @@
 """
 serial_reader.py
 Reads Arduino serial values with EMA smoothing and robust error handling.
-
-Errors are rate-limited so a bad solder joint doesn't spam the UI —
-at most one error report every ERROR_COOLDOWN seconds.
-The raw received line is included in error reports to help diagnose
-wiring/solder problems.
 """
 
 import threading
 import time
+import re
 import logging
 from collections import deque
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -24,20 +20,18 @@ except ImportError:
     SERIAL_AVAILABLE = False
     logger.error("pyserial not installed. Run: pip install pyserial")
 
-# Seconds between user-visible error popups for the same error category
 ERROR_COOLDOWN = 15.0
 
 
 class SerialError:
-    """Passed to the error_callback so the GUI can show useful detail."""
-    PARSE      = "parse"       # data received but couldn't be decoded
-    DISCONNECT = "disconnect"  # port dropped unexpectedly
-    CONNECT    = "connect"     # couldn't open port
+    PARSE      = "parse"
+    DISCONNECT = "disconnect"
+    CONNECT    = "connect"
 
     def __init__(self, kind: str, message: str, raw_line: str = ""):
         self.kind     = kind
         self.message  = message
-        self.raw_line = raw_line   # the raw bytes that caused a parse failure
+        self.raw_line = raw_line
 
     def __str__(self):
         s = f"[{self.kind.upper()}] {self.message}"
@@ -53,7 +47,7 @@ class SerialReader:
     def __init__(self, port: str, baud_rate: int = 9600, num_sliders: int = 5,
                  smoothing: float = 0.15,
                  callback: Optional[Callable[[List[float]], None]] = None,
-                 error_callback: Optional[Callable[[SerialError], None]] = None,
+                 error_callback: Optional[Callable[["SerialError"], None]] = None,
                  debug: bool = False):
         self.port           = port
         self.baud_rate      = baud_rate
@@ -69,15 +63,8 @@ class SerialReader:
         self._lock      = threading.Lock()
         self._smoothed  = [0.0] * num_sliders
         self._connected = False
-
-        # Rate-limiting: track last time each error kind was reported
         self._last_error_time: dict = {}
-        # Track recent parse errors for burst detection
         self._parse_error_times: deque = deque(maxlen=20)
-
-    # ------------------------------------------------------------------ #
-    # Public API                                                           #
-    # ------------------------------------------------------------------ #
 
     def start(self):
         if not SERIAL_AVAILABLE:
@@ -111,11 +98,71 @@ class SerialReader:
         if reconnect:
             self._close_port()
 
+    # ------------------------------------------------------------------ #
+    # Port listing — returns human-readable labels                        #
+    # ------------------------------------------------------------------ #
+
     @staticmethod
     def list_ports() -> List[str]:
+        """Return bare port paths only."""
         if not SERIAL_AVAILABLE:
             return []
         return sorted(p.device for p in serial.tools.list_ports.comports())
+
+    @staticmethod
+    def list_ports_with_labels() -> List[str]:
+        """
+        Return formatted strings like:
+          /dev/ttyACM0 — Arduino Uno
+          COM3         — USB Serial Device
+        Falls back to bare path if no useful description is available.
+        """
+        if not SERIAL_AVAILABLE:
+            return []
+
+        results = []
+        for p in serial.tools.list_ports.comports():
+            device = p.device
+
+            # Build a clean description from available metadata
+            parts = []
+            for attr in (p.product, p.description, p.manufacturer):
+                val = (attr or "").strip()
+                if not val or val.lower() in ("n/a", "unknown"):
+                    continue
+                # Strip the "(COMx)" suffix Windows sometimes appends to description
+                val = re.sub(r"\s*\(COM\d+\)\s*$", "", val).strip()
+                # Skip if it's just the device path repeated
+                if val.lower() == device.lower():
+                    continue
+                if val and val not in parts:
+                    parts.append(val)
+                    break  # use only the best single label
+
+            label = f"{device} — {parts[0]}" if parts else device
+            results.append(label)
+
+        return sorted(results)
+
+    @staticmethod
+    def extract_port(display_value: str) -> str:
+        """
+        Extract the bare port path from a display string.
+        '/dev/ttyACM0 — Arduino Uno'  →  '/dev/ttyACM0'
+        'COM3'                         →  'COM3'
+        """
+        return display_value.split(" — ")[0].strip()
+
+    @staticmethod
+    def find_label_for_port(port: str, labels: List[str]) -> str:
+        """
+        Given a raw port and a list of display labels, return the matching
+        label, or the raw port if not found.
+        """
+        for label in labels:
+            if SerialReader.extract_port(label) == port:
+                return label
+        return port
 
     # ------------------------------------------------------------------ #
     # Internal loop                                                        #
@@ -124,7 +171,6 @@ class SerialReader:
     def _loop(self):
         while self._running:
             try:
-                logger.info(f"Connecting to {self.port} @ {self.baud_rate} baud…")
                 with self._lock:
                     self._serial = serial.Serial(self.port, self.baud_rate, timeout=1)
                 self._connected = True
@@ -167,45 +213,34 @@ class SerialReader:
             alpha = self.smoothing
 
         parts = line.split("|")
-
-        # ---- Validate ----
         if len(parts) != num:
-            self._parse_error(
-                line,
+            self._parse_error(line,
                 f"Expected {num} values separated by '|', got {len(parts)}.\n"
-                f"Check NUM_SLIDERS in the Arduino sketch matches Settings."
-            )
+                f"Check NUM_SLIDERS in the Arduino sketch matches Settings.")
             return
 
         try:
             raw = [int(p.strip()) for p in parts]
         except ValueError:
-            self._parse_error(
-                line,
+            self._parse_error(line,
                 "One or more values could not be read as a number.\n"
-                "This often means a loose wire or cold solder joint."
-            )
+                "This often means a loose wire or cold solder joint.")
             return
 
-        # Out-of-range check (ADC is 0–1023 on 10-bit Arduino)
         bad = [(i, v) for i, v in enumerate(raw) if not (0 <= v <= 1023)]
         if bad:
             details = ", ".join(f"Slider {i+1}={v}" for i, v in bad)
-            self._parse_error(
-                line,
+            self._parse_error(line,
                 f"Values out of range (0–1023): {details}.\n"
-                "Check potentiometer wiring — left pin=GND, right pin=5V."
-            )
+                "Check potentiometer wiring — left pin=GND, right pin=5V.")
             return
 
-        # ---- Smooth ----
         with self._lock:
             for i in range(num):
                 self._smoothed[i] = (alpha * raw[i] +
                                      (1.0 - alpha) * self._smoothed[i])
             snap = list(self._smoothed)
 
-        # ---- Debug output ----
         if self.debug:
             raw_s    = " | ".join(f"{v:4d}" for v in raw)
             smooth_s = " | ".join(f"{v:6.1f}" for v in snap)
@@ -220,23 +255,17 @@ class SerialReader:
                 logger.error(f"Slider callback error: {e}")
 
     def _parse_error(self, raw_line: str, detail: str):
-        """Track parse errors and report if rate-limit allows."""
         now = time.time()
         self._parse_error_times.append(now)
-        # Count errors in last 10 seconds
         recent = sum(1 for t in self._parse_error_times if now - t < 10)
-        burst_hint = (f"\n\n({recent} parse errors in the last 10 seconds — "
-                      "likely a solder/wiring issue.)" if recent > 5 else "")
-        self._report_error(SerialError(
-            SerialError.PARSE, detail + burst_hint, raw_line
-        ))
+        burst  = (f"\n\n({recent} parse errors in the last 10 seconds — "
+                  "likely a solder/wiring issue.)" if recent > 5 else "")
+        self._report_error(SerialError(SerialError.PARSE, detail + burst, raw_line))
 
     def _report_error(self, err: SerialError):
-        """Call error_callback respecting per-kind cooldown."""
-        now = time.time()
+        now  = time.time()
         last = self._last_error_time.get(err.kind, 0)
         if now - last < ERROR_COOLDOWN:
-            logger.debug(f"Serial error suppressed (cooldown): {err.message}")
             return
         self._last_error_time[err.kind] = now
         logger.warning(f"Serial {err.kind}: {err.message}")

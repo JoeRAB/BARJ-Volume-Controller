@@ -1,153 +1,119 @@
 """
-gui/slider_panel.py
-A single slider panel: label, app assignment dropdown, and a vertical VU meter.
+gui/slider_panel.py  —  modern slider card with themed VU meter
 """
 
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable, List, Optional
+from gui.theme import T, F
 
-# Colour scheme
-BG_PANEL    = "#1e1e2e"
-BG_METER    = "#0d0d1a"
-FG_TEXT     = "#cdd6f4"
-FG_MUTED    = "#6c7086"
-ACCENT_LOW  = "#a6e3a1"   # green  (<60%)
-ACCENT_MID  = "#f9e2af"   # yellow (60–85%)
-ACCENT_HIGH = "#f38ba8"   # red    (>85%)
-BORDER      = "#313244"
+METER_W = 44
+METER_H = 180
 
 
 class SliderPanel(tk.Frame):
     """
-    Visual panel for one hardware slider.
-
-    Public interface
-    ----------------
-    set_value(float)         — update the meter and percentage label (0.0–1.0)
-    set_dropdown_values(list)— populate the app dropdown
-    get_target() -> str      — current assignment text
-    set_target(str)          — set the dropdown selection
-    on_change(callback)      — called (with panel index) whenever the dropdown changes
+    One hardware-slider card: badge, label, app dropdown, VU meter, value.
+    Themed at creation time; call rebuild_theme() to re-skin after a toggle.
     """
 
-    METER_WIDTH  = 34
-    METER_HEIGHT = 160
-
-    def __init__(
-        self,
-        parent,
-        index: int,
-        on_change: Optional[Callable[["SliderPanel"], None]] = None,
-        **kwargs,
-    ):
-        super().__init__(
-            parent,
-            bg=BG_PANEL,
-            highlightbackground=BORDER,
-            highlightthickness=1,
-            padx=10,
-            pady=10,
-            **kwargs,
-        )
-        self.index = index
+    def __init__(self, parent, index: int,
+                 on_change: Optional[Callable] = None, **kw):
+        super().__init__(parent, bg=T.bg_card,
+                         highlightbackground=T.border,
+                         highlightthickness=1, **kw)
+        self.index      = index
         self._on_change = on_change
-        self._value = 0.0
+        self._value     = 0.0
         self._build()
 
     # ------------------------------------------------------------------ #
-    # Build UI                                                             #
+    # Build                                                                #
     # ------------------------------------------------------------------ #
 
     def _build(self):
-        # --- Slider number header ---
-        tk.Label(
-            self,
-            text=f"Slider {self.index + 1}",
-            font=("Segoe UI", 9, "bold"),
-            bg=BG_PANEL,
-            fg=FG_MUTED,
-        ).pack(pady=(0, 4))
+        for w in self.winfo_children():
+            w.destroy()
+        self.configure(bg=T.bg_card, highlightbackground=T.border)
 
-        # --- App assignment dropdown ---
+        # Thin accent strip at top
+        tk.Frame(self, bg=T.accent, height=3).pack(fill="x")
+
+        inner = tk.Frame(self, bg=T.bg_card, padx=10, pady=10)
+        inner.pack(fill="both", expand=True)
+
+        # Badge + header
+        hdr = tk.Frame(inner, bg=T.bg_card)
+        hdr.pack(fill="x", pady=(0, 6))
+
+        badge = tk.Label(hdr, text=str(self.index + 1),
+                         font=F.badge, bg=T.accent, fg=T.accent_fg,
+                         width=2, padx=3, pady=1)
+        badge.pack(side="left")
+
+        tk.Label(hdr, text="Slider", font=F.tiny, bg=T.bg_card,
+                 fg=T.fg_muted).pack(side="left", padx=(6, 0))
+
+        # App dropdown
         self._target_var = tk.StringVar()
-        self._target_var.trace_add("write", self._on_target_changed)
+        self._target_var.trace_add("write", self._changed)
+        self._combo = ttk.Combobox(inner, textvariable=self._target_var,
+                                   width=14, font=F.small)
+        self._combo.pack(fill="x", pady=(0, 10))
 
-        self._dropdown = ttk.Combobox(
-            self,
-            textvariable=self._target_var,
-            width=16,
-            state="normal",
-            font=("Segoe UI", 9),
-        )
-        self._dropdown.pack(pady=(0, 8))
+        # VU meter (Canvas)
+        meter_frame = tk.Frame(inner, bg=T.bg_card)
+        meter_frame.pack()
 
-        # --- VU meter canvas ---
-        self._canvas = tk.Canvas(
-            self,
-            width=self.METER_WIDTH,
-            height=self.METER_HEIGHT,
-            bg=BG_METER,
-            highlightthickness=0,
-        )
+        self._canvas = tk.Canvas(meter_frame, width=METER_W,
+                                 height=METER_H, bg=T.bg_card,
+                                 highlightthickness=0)
         self._canvas.pack()
 
-        # Background ticks (every 10%)
-        for i in range(1, 10):
-            y = int(self.METER_HEIGHT * (1 - i / 10))
-            self._canvas.create_line(
-                0, y, self.METER_WIDTH, y,
-                fill="#2a2a3e", dash=(2, 3)
-            )
+        # Track (background)
+        r = METER_W // 2
+        self._track_id = self._canvas.create_rectangle(
+            4, 0, METER_W - 4, METER_H,
+            fill=T.meter_track, outline="", width=0)
 
-        # The bar itself (starts at zero height)
-        self._bar = self._canvas.create_rectangle(
-            2, self.METER_HEIGHT, self.METER_WIDTH - 2, self.METER_HEIGHT,
-            fill=ACCENT_LOW, outline="",
-        )
+        # Fill bar (starts at zero)
+        self._bar_id = self._canvas.create_rectangle(
+            4, METER_H, METER_W - 4, METER_H,
+            fill=T.meter_low, outline="", width=0)
 
-        # --- Percentage label ---
-        self._pct_label = tk.Label(
-            self,
-            text="0%",
-            font=("Segoe UI", 9),
-            bg=BG_PANEL,
-            fg=FG_TEXT,
-        )
-        self._pct_label.pack(pady=(6, 0))
+        # Tick marks (25 / 50 / 75 %)
+        for pct in (0.25, 0.50, 0.75):
+            y = int(METER_H * (1 - pct))
+            self._canvas.create_line(METER_W - 6, y, METER_W - 2, y,
+                                     fill=T.fg_subtle, width=1)
+
+        # Peak line
+        self._peak_id = self._canvas.create_rectangle(
+            4, METER_H, METER_W - 4, METER_H,
+            fill=T.fg_muted, outline="", width=0)
+        self._peak_value  = 0.0
+        self._peak_hold   = 0
+
+        # Percentage label
+        self._pct_label = tk.Label(inner, text="0%",
+                                   font=F.body_b, bg=T.bg_card,
+                                   fg=T.fg, anchor="center")
+        self._pct_label.pack(pady=(8, 0))
 
     # ------------------------------------------------------------------ #
-    # Public methods                                                       #
+    # Public API                                                           #
     # ------------------------------------------------------------------ #
 
     def set_value(self, value: float):
-        """Update the VU meter. value is 0.0–1.0."""
         self._value = max(0.0, min(1.0, value))
-        pct = int(self._value * 100)
-        self._pct_label.config(text=f"{pct}%")
-
-        bar_h = int(self._value * (self.METER_HEIGHT - 4))
-        top_y = self.METER_HEIGHT - bar_h
-        self._canvas.coords(
-            self._bar,
-            2, top_y, self.METER_WIDTH - 2, self.METER_HEIGHT
-        )
-
-        if self._value < 0.60:
-            colour = ACCENT_LOW
-        elif self._value < 0.85:
-            colour = ACCENT_MID
-        else:
-            colour = ACCENT_HIGH
-        self._canvas.itemconfig(self._bar, fill=colour)
+        self._pct_label.config(text=f"{int(self._value * 100)}%")
+        self._draw_bar()
 
     def set_dropdown_values(self, values: List[str]):
-        """Populate the dropdown without losing the current selection."""
-        current = self._target_var.get()
-        self._dropdown["values"] = values
-        # Restore selection if it's still valid, otherwise keep as typed text
-        if current in values:
-            self._target_var.set(current)
+        cur = self._target_var.get()
+        self._combo["values"] = values
+        if cur in values:
+            self._target_var.set(cur)
 
     def get_target(self) -> str:
         return self._target_var.get().strip()
@@ -155,10 +121,47 @@ class SliderPanel(tk.Frame):
     def set_target(self, target: str):
         self._target_var.set(target or "")
 
+    def rebuild_theme(self):
+        """Re-skin after a theme toggle."""
+        self._build()
+        self.set_value(self._value)
+
     # ------------------------------------------------------------------ #
-    # Internal                                                             #
+    # Drawing                                                              #
     # ------------------------------------------------------------------ #
 
-    def _on_target_changed(self, *_):
+    def _draw_bar(self):
+        v    = self._value
+        bar_h = int(v * METER_H)
+        top_y = METER_H - bar_h
+
+        self._canvas.configure(bg=T.bg_card)
+        self._canvas.itemconfig(self._track_id, fill=T.meter_track)
+
+        colour = (T.meter_low if v < 0.60
+                  else T.meter_mid if v < 0.85
+                  else T.meter_high)
+
+        self._canvas.coords(self._bar_id, 4, top_y, METER_W - 4, METER_H)
+        self._canvas.itemconfig(self._bar_id, fill=colour)
+
+        # Simple peak hold (decays every ~15 frames)
+        if v >= self._peak_value:
+            self._peak_value = v
+            self._peak_hold  = 15
+        else:
+            if self._peak_hold > 0:
+                self._peak_hold -= 1
+            else:
+                self._peak_value = max(0.0, self._peak_value - 0.008)
+
+        pk_y = int(METER_H * (1 - self._peak_value))
+        self._canvas.coords(self._peak_id, 4, pk_y - 2, METER_W - 4, pk_y)
+        self._canvas.itemconfig(self._peak_id,
+                                fill=T.err if self._peak_value > 0.85 else T.fg_muted)
+
+    # ------------------------------------------------------------------ #
+
+    def _changed(self, *_):
         if self._on_change:
             self._on_change(self)

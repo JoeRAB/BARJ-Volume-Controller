@@ -1,7 +1,10 @@
 """
 app_detector.py
-Polls the audio controller for running apps every N seconds.
-'mic' removed from special targets.
+Polls audio controller for running apps every N seconds.
+
+Special targets (always at top of every dropdown):
+  master     — system master volume
+  all_others — any running app NOT explicitly assigned to another slider
 """
 
 import threading
@@ -13,20 +16,22 @@ logger = logging.getLogger(__name__)
 
 
 class AppDetector:
-    SPECIAL_TARGETS = ["master"]   # mic removed
+    SPECIAL_TARGETS = ["master", "all_others"]
 
-    def __init__(self, audio_controller, callback: Optional[Callable[[List[str]], None]] = None,
+    def __init__(self, audio_controller,
+                 callback: Optional[Callable[[List[str]], None]] = None,
                  interval: float = 5.0):
-        self.audio     = audio_controller
-        self.callback  = callback
-        self.interval  = interval
+        self.audio    = audio_controller
+        self.callback = callback
+        self.interval = interval
         self._thread: Optional[threading.Thread] = None
-        self._running  = False
+        self._running = False
         self._cached_apps: List[str] = []
 
     def start(self):
         self._running = True
-        self._thread  = threading.Thread(target=self._loop, daemon=True, name="AppDetector")
+        self._thread  = threading.Thread(target=self._loop, daemon=True,
+                                         name="AppDetector")
         self._thread.start()
 
     def stop(self):
