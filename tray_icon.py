@@ -15,6 +15,7 @@ Linux note:
 import logging
 import os
 import platform
+import threading
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -26,16 +27,6 @@ try:
 except ImportError:
     TRAY_AVAILABLE = False
     logger.warning("pystray / Pillow not installed — tray icon disabled.")
-
-# Try to grab GTK for the main-thread pump approach (Linux GTK desktops)
-_GTK = None
-if TRAY_AVAILABLE and platform.system() == "Linux":
-    try:
-        import gi
-        gi.require_version("Gtk", "3.0")
-        from gi.repository import Gtk as _GTK  # type: ignore
-    except Exception:
-        _GTK = None
 
 
 def _current_desktop() -> str:
@@ -84,7 +75,7 @@ class TrayIcon:
         self._on_hide      = on_hide or on_show_hide
         self._icon: Optional["pystray.Icon"] = None
         self._gnome   = "gnome" in _current_desktop()
-        self._use_gtk_pump = False   # True when we drive GTK ourselves
+        self._thread: Optional[threading.Thread] = None
 
     # ------------------------------------------------------------------ #
 
@@ -126,34 +117,31 @@ class TrayIcon:
                     "Reinstall so the venv is created with "
                     "--system-site-packages.")
 
-            # pystray's run_detached() starts the backend's own loop in a
-            # thread. For AppIndicator this works ONLY if GObject's loop gets
-            # pumped; we additionally pump GTK from tkinter (see pump()).
-            if _GTK is not None and "appindicator" in backend.lower():
-                self._use_gtk_pump = True
-
-            self._icon.run_detached()
-            logger.info(f"Tray started (gtk_pump={self._use_gtk_pump}).")
+            # Run the tray (and its GTK/GLib loop) on a dedicated background
+            # thread. icon.run() blocks running the loop, so it MUST go in a
+            # thread — tkinter owns the main thread. The tray thread owns GTK
+            # exclusively; we never touch GTK from the main thread, which
+            # avoids the multi-loop conflict that left the icon invisible.
+            self._thread = threading.Thread(
+                target=self._run_icon, daemon=True, name="TrayIcon")
+            self._thread.start()
+            logger.info("Tray started (dedicated thread).")
             return True
 
         except Exception as e:
             logger.warning(f"Tray icon failed to start: {e}")
             return False
 
-    def pump(self):
-        """
-        Called periodically from the tkinter main loop (via after()).
-        Drives pending GTK events so AppIndicator menu callbacks fire on
-        the main thread. No-op when not in GTK pump mode.
-        """
-        if not self._use_gtk_pump or _GTK is None:
-            return
+    def _run_icon(self):
         try:
-            # Process all pending GTK events without blocking
-            while _GTK.events_pending():
-                _GTK.main_iteration_do(False)
+            # visible=True ensures the indicator is shown once the loop runs
+            self._icon.run()
         except Exception as e:
-            logger.debug(f"GTK pump error: {e}")
+            logger.warning(f"Tray loop ended: {e}")
+
+    def pump(self):
+        """Kept for API compatibility; no-op now that the tray owns its loop."""
+        return
 
     def stop(self):
         if self._icon:
