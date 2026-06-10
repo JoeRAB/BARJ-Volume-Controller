@@ -55,9 +55,12 @@ def _make_icon_image(size: int = 64) -> "Image.Image":
 
 
 class TrayIcon:
-    def __init__(self, on_show_hide: Callable, on_quit: Callable):
+    def __init__(self, on_show_hide: Callable, on_quit: Callable,
+                 on_show: Callable = None, on_hide: Callable = None):
         self._on_show_hide = on_show_hide
         self._on_quit      = on_quit
+        self._on_show      = on_show or on_show_hide
+        self._on_hide      = on_hide or on_show_hide
         self._icon: Optional["pystray.Icon"] = None
         self._gnome        = "gnome" in _current_desktop()
 
@@ -74,7 +77,8 @@ class TrayIcon:
             )
         try:
             menu = pystray.Menu(
-                pystray.MenuItem("Show / Hide", self._toggle, default=True),
+                pystray.MenuItem("Show", self._show, default=True),
+                pystray.MenuItem("Hide", self._hide),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Quit", self._quit),
             )
@@ -105,8 +109,11 @@ class TrayIcon:
             except Exception:
                 pass
 
-    def _toggle(self, icon, item):
-        self._on_show_hide()
+    def _show(self, icon, item):
+        self._on_show()
+
+    def _hide(self, icon, item):
+        self._on_hide()
 
     def _quit(self, icon, item):
         self._on_quit()
