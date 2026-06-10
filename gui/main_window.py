@@ -508,12 +508,37 @@ class MainWindow(tk.Tk):
         self.after(0, self.withdraw)
 
     def _on_window_close(self):
-        if self._tray_available:
-            self.withdraw()
-            self._tray.notify(APP_TITLE, "Running in the system tray.")
-        else:
-            if messagebox.askyesno("Quit", f"Quit {APP_TITLE}?", parent=self):
+        action = self.config_mgr.get("ui", "close_action", default="ask")
+
+        # No tray → minimizing isn't possible; quit (confirm only if set to ask)
+        if not self._tray_available:
+            if action == "ask":
+                if messagebox.askyesno("Quit", f"Quit {APP_TITLE}?", parent=self):
+                    self._quit_app()
+            else:
                 self._quit_app()
+            return
+
+        if action == "tray":
+            self._minimize_to_tray()
+        elif action == "quit":
+            self._quit_app()
+        else:  # "ask"
+            from gui.close_dialog import CloseDialog
+            dlg = CloseDialog(self, tray_available=True)
+            self.wait_window(dlg)
+            if dlg.result is None:
+                return  # cancelled — do nothing
+            if dlg.remember:
+                self.config_mgr.set(dlg.result, "ui", "close_action")
+            if dlg.result == "tray":
+                self._minimize_to_tray()
+            else:
+                self._quit_app()
+
+    def _minimize_to_tray(self):
+        self.withdraw()
+        self._tray.notify(APP_TITLE, "Running in the system tray.")
 
     def _quit_app(self):
         self.after(0, self._do_quit)

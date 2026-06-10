@@ -96,13 +96,30 @@ class SettingsDialog(tk.Toplevel):
                  font=F.tiny, bg=T.bg_surface, fg=T.fg_subtle
                  ).grid(row=5, column=0, columnspan=2, pady=(0,16))
 
+        # When closing window
+        row("Close Button", 6)
+        _CLOSE_LABELS = {
+            "ask":  "Ask every time",
+            "tray": "Minimize to tray",
+            "quit": "Quit the app",
+        }
+        self._close_keys = list(_CLOSE_LABELS.keys())
+        current_action = self.config_mgr.get("ui", "close_action", default="ask")
+        self._close_var = tk.StringVar(
+            value=_CLOSE_LABELS.get(current_action, "Ask every time"))
+        ttk.Combobox(outer, textvariable=self._close_var,
+                     values=list(_CLOSE_LABELS.values()),
+                     width=18, state="readonly", font=F.small
+                     ).grid(row=6, column=1, sticky="w", pady=6)
+        self._close_labels = _CLOSE_LABELS
+
         # Separator
         tk.Frame(outer, bg=T.separator, height=1
-                 ).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0,14))
+                 ).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0,14))
 
         # Buttons
         bf = tk.Frame(outer, bg=T.bg_surface)
-        bf.grid(row=7, column=0, columnspan=2)
+        bf.grid(row=8, column=0, columnspan=2)
         tk.Button(bf, text="Save", command=self._save,
                   bg=T.btn_primary, fg=T.btn_primary_fg, relief="flat",
                   font=F.body_b, padx=20, pady=7, cursor="hand2"
@@ -127,5 +144,9 @@ class SettingsDialog(tk.Toplevel):
         self.config_mgr.set(int(self._baud_var.get()),    "serial","baud_rate")
         self.config_mgr.set(int(count),                   "sliders","count")
         self.config_mgr.set(round(self._smooth_var.get(),2), "sliders","smoothing")
+        # Map the displayed label back to its config key
+        label_to_key = {v: k for k, v in self._close_labels.items()}
+        self.config_mgr.set(
+            label_to_key.get(self._close_var.get(), "ask"), "ui", "close_action")
         if self._on_save: self._on_save()
         self.destroy()
