@@ -63,6 +63,7 @@ class SerialReader:
         self._running   = False
         self._lock      = threading.Lock()
         self._smoothed  = [0.0] * num_sliders
+        self._seeded    = False   # first values snap, later ones smooth
         self._connected = False
         self._last_error_time: dict = {}
         self._parse_error_times: deque = deque(maxlen=20)
@@ -94,6 +95,7 @@ class SerialReader:
             if num_sliders is not None:
                 self.num_sliders = num_sliders
                 self._smoothed   = [0.0] * num_sliders
+                self._seeded     = False   # snap to positions on next data
             if smoothing is not None:
                 self.smoothing = max(0.01, min(1.0, smoothing))
         if reconnect:
@@ -175,6 +177,7 @@ class SerialReader:
                 with self._lock:
                     self._serial = serial.Serial(self.port, self.baud_rate, timeout=1)
                 self._connected = True
+                self._seeded    = False   # snap to current positions
                 logger.info(f"Connected to {self.port}")
 
                 while self._running:
@@ -246,9 +249,18 @@ class SerialReader:
             raw = [1023 - v for v in raw]
 
         with self._lock:
-            for i in range(num):
-                self._smoothed[i] = (alpha * raw[i] +
-                                     (1.0 - alpha) * self._smoothed[i])
+            if not self._seeded:
+                # First message after (re)connect: jump straight to the real
+                # pot positions instead of converging from zero. With the
+                # transmit-on-change firmware idle data arrives only every
+                # 500 ms, so converging from 0 would visibly take ~10 s.
+                for i in range(num):
+                    self._smoothed[i] = float(raw[i])
+                self._seeded = True
+            else:
+                for i in range(num):
+                    self._smoothed[i] = (alpha * raw[i] +
+                                         (1.0 - alpha) * self._smoothed[i])
             snap = list(self._smoothed)
 
         if self.debug:
