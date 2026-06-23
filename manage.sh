@@ -59,8 +59,14 @@ bootstrap_if_needed() {
     chmod +x "$SRC/manage.sh"
     success "Downloaded to a temporary folder."
     blank
-    # Re-run the downloaded manager (which now sits beside the real source)
-    exec bash "$SRC/manage.sh" "$@"
+    # Re-run the downloaded manager. Redirect stdin from the terminal so its
+    # prompts work even though we were started via `curl ... | bash` (where
+    # stdin is the pipe, not the keyboard).
+    if [[ -e /dev/tty ]]; then
+        exec bash "$SRC/manage.sh" "$@" </dev/tty
+    else
+        exec bash "$SRC/manage.sh" "$@"
+    fi
 }
 
 # =============================================================================
@@ -154,7 +160,7 @@ run_dep_check() {
 
     blank
     if $has_missing; then
-        read -rp "$(echo -e "${BOLD}Do you want to install missing dependencies? [Y/n]: ${RESET}")" ans
+        read -rp "$(echo -e "${BOLD}Do you want to install missing dependencies? [Y/n]: ${RESET}")" ans </dev/tty
         blank
         case "${ans,,}" in
             n|no) say "${YELLOW}Cancelled. No changes made.${RESET}"; exit 0 ;;
@@ -399,7 +405,7 @@ do_update() {
     run_dep_check "$install_dir"
 
     blank
-    read -rp "$(echo -e "${BOLD}Proceed with update? [Y/n]: ${RESET}")" ans
+    read -rp "$(echo -e "${BOLD}Proceed with update? [Y/n]: ${RESET}")" ans </dev/tty
     blank
     case "${ans,,}" in
         n|no) say "${YELLOW}Update cancelled. No changes made.${RESET}"; exit 0 ;;
@@ -448,7 +454,7 @@ do_uninstall() {
         say "  ${CYAN}$CONFIG_DIR${RESET}"
         blank
         say "  Keeping them means a future reinstall restores your profiles."
-        read -rp "$(echo -e "${BOLD}Keep config and profiles? [Y/n]: ${RESET}")" keep_cfg
+        read -rp "$(echo -e "${BOLD}Keep config and profiles? [Y/n]: ${RESET}")" keep_cfg </dev/tty
         blank
         case "${keep_cfg,,}" in
             n|no) del_config="y" ;;   # user explicitly chose to wipe everything
@@ -456,7 +462,7 @@ do_uninstall() {
         esac
     fi
 
-    read -rp "$(echo -e "${BOLD}Proceed with uninstall? [y/N]: ${RESET}")" ans
+    read -rp "$(echo -e "${BOLD}Proceed with uninstall? [y/N]: ${RESET}")" ans </dev/tty
     blank
     case "${ans,,}" in
         y|yes) ;;
@@ -505,7 +511,7 @@ ask_for_custom_path() {
     say "  Example:  /home/joe/.local/share/barj-volume-controller"
     say "  (Press Tab to autocomplete the path)"
     blank
-    read -rep "$(echo -e "${BOLD}Path: ${RESET}")" custom_path
+    read -rep "$(echo -e "${BOLD}Path: ${RESET}")" custom_path </dev/tty
     blank
 
     # Expand ~ if entered
@@ -522,7 +528,7 @@ ask_for_custom_path() {
     else
         warn "No BARJ Volume Controller installation found at: $custom_path"
         blank
-        read -rp "$(echo -e "${BOLD}Install here instead? [Y/n]: ${RESET}")" ans_install_here
+        read -rp "$(echo -e "${BOLD}Install here instead? [Y/n]: ${RESET}")" ans_install_here </dev/tty
         case "${ans_install_here,,}" in
             n|no) say "Returning to menu."; return 1 ;;
             *)    do_install "$custom_path"; exit 0 ;;
@@ -539,7 +545,7 @@ ask_for_install_path() {
     say "  Example:  /opt/barj   or   ~/apps/barj-volume-controller"
     say "  (Press Tab to autocomplete the path)"
     blank
-    read -rep "$(echo -e "${BOLD}Install path: ${RESET}")" install_target
+    read -rep "$(echo -e "${BOLD}Install path: ${RESET}")" install_target </dev/tty
     blank
 
     # Expand ~ if entered
@@ -553,7 +559,7 @@ ask_for_install_path() {
     # Warn if an install already exists there
     if is_install "$install_target"; then
         warn "An installation already exists at: $install_target"
-        read -rp "$(echo -e "${BOLD}Update it instead of reinstalling? [Y/n]: ${RESET}")" ans_up
+        read -rp "$(echo -e "${BOLD}Update it instead of reinstalling? [Y/n]: ${RESET}")" ans_up </dev/tty
         case "${ans_up,,}" in
             n|no) : ;;                                  # fall through to install
             *)    do_update "$install_target"; exit 0 ;;
@@ -564,6 +570,15 @@ ask_for_install_path() {
 
 main() {
     bootstrap_if_needed "$@"
+
+    # All prompts read from /dev/tty so piping the script still works. If
+    # there's genuinely no terminal (e.g. a non-interactive CI run), bail with
+    # a clear message instead of looping on empty input.
+    if [[ ! -e /dev/tty ]]; then
+        die "No terminal available for input. Run this script directly in a terminal:
+       git clone $REPO_URL && cd BARJ-Volume-Controller && ./manage.sh"
+    fi
+
     clear
     blank
     say "${BOLD}${CYAN}╔══════════════════════════════════════════╗${RESET}"
@@ -589,7 +604,7 @@ main() {
         say "    2)  Uninstall"
         say "    3)  Cancel"
         blank
-        read -rp "$(echo -e "${BOLD}Enter choice [1/2/3]: ${RESET}")" choice
+        read -rp "$(echo -e "${BOLD}Enter choice [1/2/3]: ${RESET}")" choice </dev/tty
         blank
 
         case "$choice" in
@@ -610,7 +625,7 @@ main() {
         say "    3)  Provide a path to an existing installation"
         say "    4)  Cancel"
         blank
-        read -rp "$(echo -e "${BOLD}Enter choice [1/2/3/4]: ${RESET}")" choice
+        read -rp "$(echo -e "${BOLD}Enter choice [1/2/3/4]: ${RESET}")" choice </dev/tty
         blank
 
         case "$choice" in
@@ -632,7 +647,7 @@ main() {
                     say "    2)  Uninstall"
                     say "    3)  Cancel"
                     blank
-                    read -rp "$(echo -e "${BOLD}Enter choice [1/2/3]: ${RESET}")" choice2
+                    read -rp "$(echo -e "${BOLD}Enter choice [1/2/3]: ${RESET}")" choice2 </dev/tty
                     blank
                     case "$choice2" in
                         1) do_update    "$custom_path" ;;
