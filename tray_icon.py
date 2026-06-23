@@ -1,15 +1,14 @@
 """
 BARJ Volume Controller system tray icon
 
-Linux note:
-  On GTK desktops (Cinnamon/Mint, GNOME, etc.) pystray's AppIndicator
-  backend needs GTK's main loop to be pumped. tkinter owns the main thread,
-  so instead of pystray.run_detached() (which starts its own thread and
-  leaves AppIndicator callbacks dead), we drive GTK iterations from tkinter's
-  event loop via the `pump()` method, called periodically by the main window.
+The icon and its GTK/GLib loop run on a dedicated background thread, since
+icon.run() blocks and tkinter owns the main thread. The tray thread owns GTK
+exclusively (we never touch GTK from the main thread), which avoids the
+multi-loop conflict that can leave the icon invisible.
 
-  If GTK isn't available we fall back to pystray.run_detached() (works for
-  the _xorg / Windows / macOS backends).
+On Linux the AppIndicator backend is forced when its GObject bindings are
+importable (see below), because pystray otherwise defaults to the _xorg
+backend, which shows notifications but no visible icon on most desktops.
 """
 
 import logging
