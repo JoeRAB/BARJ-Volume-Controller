@@ -20,6 +20,26 @@ from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
+# pystray picks its backend at import time. On Linux it often defaults to the
+# _xorg backend, which can fire notifications but doesn't render a persistent
+# tray icon on most desktops (Cinnamon, KDE, etc.). The AppIndicator backend
+# is the one that actually shows an icon (it's what Steam/Discord use). Force
+# it *before* importing pystray, but only if the GI bindings are importable,
+# otherwise let pystray fall back on its own.
+if platform.system() == "Linux" and "PYSTRAY_BACKEND" not in os.environ:
+    def _appindicator_available() -> bool:
+        try:
+            import gi
+            try:
+                gi.require_version("AyatanaAppIndicator3", "0.1")
+            except ValueError:
+                gi.require_version("AppIndicator3", "0.1")
+            return True
+        except (ImportError, ValueError):
+            return False
+    if _appindicator_available():
+        os.environ["PYSTRAY_BACKEND"] = "appindicator"
+
 try:
     import pystray
     from PIL import Image, ImageDraw
@@ -142,15 +162,17 @@ class TrayIcon:
                 menu =self._build_menu(),
             )
             backend = type(self._icon).__module__
-            logger.info(f"Tray backend: {backend}")
+            forced = os.environ.get("PYSTRAY_BACKEND", "auto")
+            logger.info(f"Tray backend: {backend} (PYSTRAY_BACKEND={forced})")
 
             if backend.endswith("_xorg"):
                 logger.warning(
-                    "Tray using the _xorg fallback backend, which is "
-                    "unresponsive on most desktops. This means the GTK/"
-                    "AppIndicator bindings aren't importable in the venv. "
-                    "Reinstall so the venv is created with "
-                    "--system-site-packages.")
+                    "Tray is using the _xorg fallback backend, which shows "
+                    "notifications but usually no visible icon. The "
+                    "AppIndicator GObject bindings aren't importable. On "
+                    "Debian/Mint install them with:\n"
+                    "  sudo apt install gir1.2-ayatana-appindicator3-0.1 python3-gi\n"
+                    "then reinstall so the venv has --system-site-packages.")
 
             # Run the tray (and its GTK/GLib loop) on a dedicated background
             # thread. icon.run() blocks running the loop, so it MUST go in a
