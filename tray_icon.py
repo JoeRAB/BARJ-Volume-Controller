@@ -19,13 +19,19 @@ from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-# pystray picks its backend at import time. On Linux it often defaults to the
-# _xorg backend, which can fire notifications but doesn't render a persistent
-# tray icon on most desktops (Cinnamon, KDE, etc.). The AppIndicator backend
-# is the one that actually shows an icon (it's what Steam/Discord use). Force
-# it *before* importing pystray, but only if the GI bindings are importable,
-# otherwise let pystray fall back on its own.
+# pystray picks its backend at import time, and the right one depends on the
+# desktop. Cinnamon/XFCE/MATE provide a legacy XEmbed system tray, which is
+# pystray's default ("_xorg") backend - that's what shows there (and what apps
+# like Steam/Discord use). GNOME and KDE instead want the AppIndicator /
+# StatusNotifier backend. So: force AppIndicator only on desktops that need it,
+# and otherwise leave pystray on its XEmbed default. An explicit
+# PYSTRAY_BACKEND in the environment always wins, so it can be overridden for
+# testing.
 if platform.system() == "Linux" and "PYSTRAY_BACKEND" not in os.environ:
+    _de = (os.environ.get("XDG_CURRENT_DESKTOP", "") or
+           os.environ.get("DESKTOP_SESSION", "")).lower()
+    _wants_appindicator = any(k in _de for k in ("gnome", "kde", "plasma", "unity"))
+
     def _appindicator_available() -> bool:
         try:
             import gi
@@ -36,8 +42,11 @@ if platform.system() == "Linux" and "PYSTRAY_BACKEND" not in os.environ:
             return True
         except (ImportError, ValueError):
             return False
-    if _appindicator_available():
+
+    if _wants_appindicator and _appindicator_available():
         os.environ["PYSTRAY_BACKEND"] = "appindicator"
+    # On Cinnamon/XFCE/MATE/etc. we deliberately leave the default (XEmbed),
+    # which is the backend those panels actually display.
 
 try:
     import pystray
@@ -162,16 +171,10 @@ class TrayIcon:
             )
             backend = type(self._icon).__module__
             forced = os.environ.get("PYSTRAY_BACKEND", "auto")
-            logger.info(f"Tray backend: {backend} (PYSTRAY_BACKEND={forced})")
-
-            if backend.endswith("_xorg"):
-                logger.warning(
-                    "Tray is using the _xorg fallback backend, which shows "
-                    "notifications but usually no visible icon. The "
-                    "AppIndicator GObject bindings aren't importable. On "
-                    "Debian/Mint install them with:\n"
-                    "  sudo apt install gir1.2-ayatana-appindicator3-0.1 python3-gi\n"
-                    "then reinstall so the venv has --system-site-packages.")
+            desktop = (os.environ.get("XDG_CURRENT_DESKTOP", "") or
+                       os.environ.get("DESKTOP_SESSION", "") or "?")
+            logger.info(f"Tray backend: {backend} "
+                        f"(PYSTRAY_BACKEND={forced}, desktop={desktop})")
 
             # Run the tray (and its GTK/GLib loop) on a dedicated background
             # thread. icon.run() blocks running the loop, so it MUST go in a
@@ -190,10 +193,20 @@ class TrayIcon:
 
     def _run_icon(self):
         try:
-            # visible=True ensures the indicator is shown once the loop runs
-            self._icon.run()
+            # Pass a setup callback: pystray calls it once the event loop is
+            # actually running, which is the correct point to make the icon
+            # visible. Some backends create the icon but never show it unless
+            # icon.visible is set from inside the running loop.
+            self._icon.run(setup=self._on_loop_ready)
         except Exception as e:
             logger.warning(f"Tray loop ended: {e}")
+
+    def _on_loop_ready(self, icon):
+        try:
+            icon.visible = True
+            logger.info("Tray icon set visible.")
+        except Exception as e:
+            logger.warning(f"Could not set tray icon visible: {e}")
 
     def stop(self):
         if self._icon:
