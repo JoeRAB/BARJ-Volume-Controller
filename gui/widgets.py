@@ -623,6 +623,17 @@ class SettingsDialog(tk.Toplevel):
                        cursor="hand2"
                        ).grid(row=10, column=1, sticky="w", pady=(0, 6))
 
+        # Tray notification toggle
+        self._notify_var = tk.BooleanVar(
+            value=bool(self.config_mgr.get("ui", "tray_notifications", default=True)))
+        tk.Checkbutton(outer, text="Show a notification when minimized to tray",
+                       variable=self._notify_var, font=F.small,
+                       bg=T.bg_surface, fg=T.fg_muted,
+                       activebackground=T.bg_surface, activeforeground=T.fg,
+                       selectcolor=T.bg_input, highlightthickness=0, bd=0,
+                       cursor="hand2"
+                       ).grid(row=11, column=1, sticky="w", pady=(0, 6))
+
         # Separator
         tk.Frame(outer, bg=T.separator, height=1
                  ).grid(row=11, column=0, columnspan=2, sticky="ew", pady=(0,14))
@@ -760,6 +771,9 @@ class SettingsDialog(tk.Toplevel):
         # Launch minimized preference
         self.config_mgr.set(bool(self._minimized_var.get()),
                             "ui", "launch_minimized")
+        # Tray notification preference
+        self.config_mgr.set(bool(self._notify_var.get()),
+                            "ui", "tray_notifications")
         # Start on login - write/remove the autostart entry to match
         from autostart import set_start_on_login
         set_start_on_login(bool(self._startup_var.get()))

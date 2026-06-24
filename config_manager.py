@@ -34,6 +34,7 @@ DEFAULT_CONFIG = {
         "close_action": "ask",    # "ask" | "tray" | "quit"
         "launch_minimized": False,  # start hidden in the tray
         "start_on_login": False,    # autostart entry managed by autostart.py
+        "tray_notifications": True,  # show a popup when minimizing to tray
     },
     # Per-slider tuning, indexed by slider number. Kept separate from profiles
     # so it describes the PHYSICAL hardware (calibration/invert/smoothing of a

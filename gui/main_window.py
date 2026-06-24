@@ -353,6 +353,9 @@ class MainWindow(tk.Tk):
     def _refresh_profile_list(self):
         self._profile_combo["values"] = self.config_mgr.get_profile_names()
         self._profile_var.set(self.config_mgr.current_profile)
+        # Keep the tray's Profile submenu in sync with new/removed profiles.
+        if getattr(self, "_tray_available", False):
+            self._tray.refresh_menu()
 
     def _load_profile(self, name):
         a = self.config_mgr.get_profile_assignments(name)
@@ -819,7 +822,8 @@ class MainWindow(tk.Tk):
 
     def _minimize_to_tray(self):
         self._do_hide()
-        self._tray.notify(APP_TITLE, "Running in the system tray.")
+        if self.config_mgr.get("ui", "tray_notifications", default=True):
+            self._tray.notify(APP_TITLE, "Running in the system tray.")
 
     def _quit_app(self):
         self.after(0, self._do_quit)
