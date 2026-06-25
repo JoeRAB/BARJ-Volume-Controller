@@ -24,7 +24,7 @@ RECONNECT_DIALOG_DELAY = 3000
 
 class MainWindow(tk.Tk):
 
-    APP_POLL_INTERVAL   = 5
+    APP_POLL_INTERVAL   = 1
     CONN_CHECK_INTERVAL = 1000
 
     def __init__(self, debug: bool = False):
@@ -196,11 +196,11 @@ class MainWindow(tk.Tk):
         tk.Frame(bar, bg=T.separator, height=1).place(relx=0, rely=1,
                                                        relwidth=1, anchor="sw")
 
-        inner = tk.Frame(bar, bg=T.header_bg, padx=18, pady=14)
+        inner = tk.Frame(bar, bg=T.header_bg, padx=20, pady=16)
         inner.pack(fill="x")
 
         # Left: app title
-        tk.Label(inner, text="🎚  BARJ Volume Controller",
+        tk.Label(inner, text="\U0001F39A  BARJ Volume Controller",
                  font=F.title, bg=T.header_bg, fg=T.accent
                  ).pack(side="left")
 
@@ -208,8 +208,8 @@ class MainWindow(tk.Tk):
 
         # Settings - square cogwheel icon button
         self._settings_btn = RoundedButton(
-            inner, text="⚙", command=self._open_settings,
-            style="default", width=40, height=34, font=(F.ui, 15),
+            inner, text="\u2699", command=self._open_settings,
+            style="default", width=44, height=38, font=(F.ui, 16),
             bg_under=T.header_bg)
         self._settings_btn.pack(side="right", padx=3)
         Tooltip(self._settings_btn, "Serial port, slider count, smoothing, theme")
@@ -217,32 +217,32 @@ class MainWindow(tk.Tk):
 
         # Divider
         tk.Frame(inner, bg=T.separator, width=1).pack(
-            side="right", padx=(10, 12), fill="y", pady=4)
+            side="right", padx=(12, 14), fill="y", pady=4)
 
         # Profile selector
         pf = tk.Frame(inner, bg=T.header_bg)
         pf.pack(side="right")
 
-        tk.Label(pf, text="Profile", font=F.tiny, bg=T.header_bg,
-                 fg=T.fg_muted).pack(side="left", padx=(0, 6))
+        tk.Label(pf, text="Profile", font=F.small, bg=T.header_bg,
+                 fg=T.fg_muted).pack(side="left", padx=(0, 8))
 
         self._profile_var   = tk.StringVar()
         self._profile_combo = ttk.Combobox(pf, textvariable=self._profile_var,
-                                           width=14, state="readonly",
+                                           width=15, state="readonly",
                                            font=F.small)
-        self._profile_combo.pack(side="left", padx=(0, 6))
+        self._profile_combo.pack(side="left", padx=(0, 8))
         self._profile_combo.bind("<<ComboboxSelected>>", self._on_profile_selected)
         Tooltip(self._profile_combo, "Switch between saved slider profiles")
 
         # Uniform square icon buttons for profile actions. No explicit Save
         # button - changes autosave to the active profile, with a brief
-        # "Saved ✓" confirmation in the status bar (Ctrl+S also forces a save).
+        # "Saved" confirmation in the status bar (Ctrl+S also forces a save).
         for txt, cmd, tip in [
-            ("⧉", self._save_as_profile, "Save as a new profile"),
-            ("－", self._delete_profile,  "Delete the current profile"),
+            ("\u29c9", self._save_as_profile, "Save as a new profile"),
+            ("\uff0d", self._delete_profile,  "Delete the current profile"),
         ]:
             b = RoundedButton(pf, text=txt, command=cmd, style="ghost",
-                              width=32, height=32, font=F.small_b,
+                              width=36, height=36, font=F.small_b,
                               bg_under=T.header_bg)
             b.pack(side="left", padx=2)
             Tooltip(b, tip)
@@ -342,7 +342,7 @@ class MainWindow(tk.Tk):
                             on_settings=self._open_slider_settings)
             # sticky="nsew" + equal column weight makes the cards grow to fill
             # the window width (and height), eliminating dead space on resize.
-            p.grid(row=0, column=i, padx=8, pady=4, sticky="nsew")
+            p.grid(row=0, column=i, padx=10, pady=6, sticky="nsew")
             self._body.grid_columnconfigure(i, weight=1, uniform="sliders")
             self._slider_panels.append(p)
         self._apply_mute_visuals()
@@ -549,19 +549,6 @@ class MainWindow(tk.Tk):
         running = [a.lower() for a in
                    (self.detector.get_current_apps() if self.detector else [])]
         procs = (self.detector.get_running_processes() if self.detector else set())
-        # One-time diagnostic so the log shows whether process detection works
-        # and, if an app reads as "not running", what process names exist. Wait
-        # until we actually have process data (the detector's first poll may not
-        # have run yet on the very first call) before logging.
-        if not getattr(self, "_logged_proc_state", False):
-            from audio import PSUTIL_AVAILABLE
-            if procs or not PSUTIL_AVAILABLE:
-                self._logged_proc_state = True
-                logger.info(f"Process detection: psutil_available={PSUTIL_AVAILABLE}, "
-                            f"{len(procs)} processes seen")
-                if procs:
-                    ff = sorted(n for n in procs if "fire" in n or "fox" in n)
-                    logger.info(f"Firefox-like processes: {ff or 'none found'}")
         for p in self._slider_panels:
             target = p.get_target()
             apps = self._target_apps(target)

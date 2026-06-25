@@ -1457,12 +1457,13 @@ class TargetPicker(tk.Toplevel):
 
 class SliderPanel(tk.Frame):
     """
-    One hardware-slider card: editable label, app dropdown, dot status
-    indicator, rounded VU meter, and percentage. Subtle hover lift.
+    One hardware-slider card (Fluent style): numbered badge, editable label,
+    settings + rename actions, a large target button that opens the picker,
+    a coloured status row, a flat VU meter, and a percentage readout.
     Themed at creation; call rebuild_theme() to re-skin after a toggle.
     """
 
-    CORNER = 8   # meter corner radius
+    CORNER = 4   # meter corner radius (sharp, Fluent)
 
     def __init__(self, parent, index: int,
                  on_change: Optional[Callable] = None,
@@ -1480,127 +1481,118 @@ class SliderPanel(tk.Frame):
         self._label_text     = f"Slider {index + 1}"
         self._muted          = False
         self._build()
-        # Hover lift on the whole card
         self.bind("<Enter>", self._on_enter, add="+")
         self.bind("<Leave>", self._on_leave, add="+")
-
-    # Build                                                                #
 
     def _build(self):
         for w in self.winfo_children():
             w.destroy()
         self.configure(bg=T.bg_card, highlightbackground=T.border)
 
-        # Accent strip across the top of the card
+        # Thin accent strip across the very top of the card.
         tk.Frame(self, bg=T.accent, height=3).pack(fill="x")
 
-        inner = tk.Frame(self, bg=T.bg_card, padx=16, pady=16)
+        inner = tk.Frame(self, bg=T.bg_card, padx=18, pady=18)
         inner.pack(fill="both", expand=True)
 
-        # ── Header: numbered badge + editable label + rename pencil ──
+        # Header: square numbered badge + editable label + action icons.
         hdr = tk.Frame(inner, bg=T.bg_card)
-        hdr.pack(fill="x", pady=(0, 12))
+        hdr.pack(fill="x", pady=(0, 14))
 
-        tk.Label(hdr, text=str(self.index + 1),
-                 font=F.badge, bg=T.accent, fg=T.accent_fg,
-                 width=2, padx=3, pady=2).pack(side="left")
+        badge = tk.Label(hdr, text=str(self.index + 1),
+                         font=F.badge, bg=T.accent, fg=T.accent_fg,
+                         width=3, pady=3)
+        badge.pack(side="left")
 
         self._label_lbl = tk.Label(hdr, text=self._label_text,
                                     font=F.body_b, bg=T.bg_card, fg=T.fg,
                                     anchor="w", cursor="hand2")
-        self._label_lbl.pack(side="left", padx=(8, 0))
+        self._label_lbl.pack(side="left", padx=(10, 0))
         self._label_lbl.bind("<Button-1>", lambda e: self._begin_rename())
 
-        pencil = tk.Label(hdr, text="✎", font=F.small, bg=T.bg_card,
+        pencil = tk.Label(hdr, text="\u270e", font=F.body, bg=T.bg_card,
                           fg=T.fg_subtle, cursor="hand2")
         pencil.pack(side="right")
         pencil.bind("<Button-1>", lambda e: self._begin_rename())
-        pencil.bind("<Enter>", lambda e: pencil.config(fg=T.accent_soft))
+        pencil.bind("<Enter>", lambda e: pencil.config(fg=T.accent))
         pencil.bind("<Leave>", lambda e: pencil.config(fg=T.fg_subtle))
         Tooltip(pencil, "Rename this slider")
 
-        gear = tk.Label(hdr, text="⋯", font=F.body_b, bg=T.bg_card,
+        gear = tk.Label(hdr, text="\u22ef", font=F.header, bg=T.bg_card,
                         fg=T.fg_subtle, cursor="hand2")
-        gear.pack(side="right", padx=(0, 6))
+        gear.pack(side="right", padx=(0, 8))
         gear.bind("<Button-1>", lambda e: self._open_settings())
-        gear.bind("<Enter>", lambda e: gear.config(fg=T.accent_soft))
+        gear.bind("<Enter>", lambda e: gear.config(fg=T.accent))
         gear.bind("<Leave>", lambda e: gear.config(fg=T.fg_subtle))
         Tooltip(gear, "Mute, invert, or calibrate this slider")
 
-        # ── Target selector: a button that opens a multi-select popup ──
-        # A slider can control one special target (Master / All Others /
-        # Unassigned) OR any number of individual apps - never a mix.
+        # Target selector: a large button that opens the multi-select popup.
         self._target_value = "none"        # str keyword, or list[str] of apps
         self._available_apps: List[str] = []
         self._target_btn = RoundedButton(
             inner, text="Unassigned", command=self._open_target_picker,
-            style="default", width=10, height=30, font=F.small,
+            style="default", width=10, height=38, font=F.small,
             bg_under=T.bg_card)
         self._target_btn.pack(fill="x")
 
-        # ── Status: coloured dot + short label ──
+        # Status: coloured dot + short label.
         status_row = tk.Frame(inner, bg=T.bg_card)
-        status_row.pack(fill="x", pady=(8, 14))
-        self._status_dot = tk.Label(status_row, text="●", font=F.small,
+        status_row.pack(fill="x", pady=(12, 16))
+        self._status_dot = tk.Label(status_row, text="\u25cf", font=F.small,
                                     bg=T.bg_card, fg=T.fg_subtle)
         self._status_dot.pack(side="left")
         self._status_txt = tk.Label(status_row, text="Unassigned", font=F.small,
                                     bg=T.bg_card, fg=T.fg_muted, anchor="w")
-        self._status_txt.pack(side="left", padx=(6, 0))
+        self._status_txt.pack(side="left", padx=(7, 0))
 
-        # ── VU meter (Canvas, rounded). Fills its frame horizontally so the
-        # bar widens with the window; height stays fixed. ──
-        meter_frame = tk.Frame(inner, bg=T.bg_card)
-        meter_frame.pack(fill="x", pady=(0, 4))
-        self._meter_w = METER_W   # current drawn width; updated on <Configure>
-        self._last_pct = -1       # set before the Configure bind below
+        # VU meter: a Canvas that fills horizontally so the bar widens with the
+        # window; height stays fixed. Wrapped in a 1px frame for a crisp edge.
+        meter_wrap = tk.Frame(inner, bg=T.border)
+        meter_wrap.pack(fill="x", pady=(0, 4))
+        meter_frame = tk.Frame(meter_wrap, bg=T.bg_card)
+        meter_frame.pack(fill="x", padx=1, pady=1)
+        self._meter_w = METER_W
+        self._last_pct = -1
         self._canvas = tk.Canvas(meter_frame, width=METER_W,
-                                 height=METER_H, bg=T.bg_card,
+                                 height=METER_H, bg=T.meter_track,
                                  highlightthickness=0)
         self._canvas.pack(fill="x")
         self._canvas.bind("<Configure>", self._on_meter_resize)
         self._build_meter()
 
-        # ── Percentage / state readout ──
+        # Percentage / state readout.
         self._pct_label = tk.Label(inner, text="0%",
-                                   font=F.header, bg=T.bg_card,
+                                   font=F.title, bg=T.bg_card,
                                    fg=T.fg, anchor="center")
-        self._pct_label.pack(pady=(10, 0))
+        self._pct_label.pack(pady=(12, 0))
 
     def _round_rect(self, x1, y1, x2, y2, r):
-        """Coordinate list for a smooth rounded rectangle polygon."""
         return [x1+r, y1, x2-r, y1, x2, y1, x2, y1+r, x2, y2-r, x2, y2,
                 x2-r, y2, x1+r, y2, x1, y2, x1, y2-r, x1, y1+r, x1, y1]
 
     def _on_meter_resize(self, event):
-        """Canvas width changed (window resized) - redraw to the new width."""
         if event.width > 1 and abs(event.width - self._meter_w) >= 1:
             self._meter_w = event.width
             self._build_meter()
-            self._last_pct = -2     # force the fill bar to redraw at new width
+            self._last_pct = -2
             self.set_value(self._value)
 
     def _build_meter(self):
         w = self._meter_w
         r = self.CORNER
-        m = 4   # inset margin so the fill sits inside the track
+        m = 3   # inset margin so the fill sits inside the track
         self._canvas.delete("all")
-        # Track always uses the normal track colour; the FILL colour conveys
-        # state (grey=none, dim=app not running, green/red=active).
         self._track_id = self._canvas.create_polygon(
             self._round_rect(0, 0, w, METER_H, r),
-            smooth=True, splinesteps=12, fill=T.meter_track, outline="")
-        # Fill bar (rounded) - inset, starts at zero height
+            smooth=True, splinesteps=8, fill=T.meter_track, outline="")
         self._bar_id = self._canvas.create_polygon(
-            self._round_rect(m, METER_H - m, w - m, METER_H - m, r - m),
-            smooth=True, splinesteps=12, fill=T.meter_low, outline="")
-        # Tick marks (subtle, inside the track on the right edge)
+            self._round_rect(m, METER_H - m, w - m, METER_H - m, max(1, r - m)),
+            smooth=True, splinesteps=8, fill=T.meter_low, outline="")
+        # Subtle tick marks at the quarter lines.
         for pct in (0.25, 0.50, 0.75):
             y = int(METER_H * (1 - pct))
-            self._canvas.create_line(w - 8, y, w - 4, y,
+            self._canvas.create_line(w - 9, y, w - 4, y,
                                      fill=T.fg_subtle, width=1)
-
-    # Public API                                                           #
 
     def set_value(self, value: float):
         self._value = max(0.0, min(1.0, value))
@@ -1617,18 +1609,12 @@ class SliderPanel(tk.Frame):
     _SPECIAL = {"none": "Unassigned", "master": "Master", "all_others": "All Others"}
 
     def set_dropdown_values(self, values: List[str]):
-        """Receive the current list of assignable app targets (running apps,
-        minus those owned by other sliders). Stored for the picker popup."""
         self._available_apps = list(values)
 
     def get_target(self):
-        """Return the slider's target: a keyword string
-        ('none'|'master'|'all_others') or a list[str] of app names."""
         return self._target_value
 
     def set_target(self, target):
-        """Accept a keyword string, a single app name, or a list of apps.
-        A single non-special string is normalised to a one-item list."""
         if isinstance(target, list):
             apps = [a for a in target if a and str(a).strip()]
             self._target_value = apps if apps else "none"
@@ -1641,7 +1627,6 @@ class SliderPanel(tk.Frame):
         self._update_target_button()
 
     def _target_summary(self) -> str:
-        """Human label for the current target shown on the button."""
         v = self._target_value
         if isinstance(v, list):
             if not v:
@@ -1679,8 +1664,6 @@ class SliderPanel(tk.Frame):
         self._active_state = state
         if not hasattr(self, "_status_dot") or not self._status_dot.winfo_exists():
             return
-        # When muted, the status row shows "Muted" - keep it, but we've still
-        # recorded the real state above so unmuting restores the right label.
         if not self._muted:
             spec = {
                 "active":     (T.ok,        "Active"),
@@ -1691,10 +1674,8 @@ class SliderPanel(tk.Frame):
             }.get(state, (T.fg_subtle, "Unassigned"))
             self._status_dot.config(fg=spec[0])
             self._status_txt.config(text=spec[1])
-        # State affects the FILL colour (grey/dim/active), so force a redraw
-        # of the bar whenever the state changes.
         if prev != state:
-            self._last_pct = -2   # force set_value to redraw the bar
+            self._last_pct = -2
             self.set_value(self._value)
 
     def rebuild_theme(self):
@@ -1707,8 +1688,6 @@ class SliderPanel(tk.Frame):
         self.set_value(self._value)
         self.set_active(self._active_state)
         self.set_muted(self._muted)
-
-    # Rename flow                                                          #
 
     def _begin_rename(self):
         new = simpledialog.askstring(
@@ -1726,8 +1705,6 @@ class SliderPanel(tk.Frame):
             self._on_settings(self)
 
     def set_muted(self, muted: bool):
-        """Reflect mute state on the badge/label (level is forced to 0 in
-        the serial layer; this is purely the visual cue)."""
         self._muted = muted
         if hasattr(self, "_label_lbl") and self._label_lbl.winfo_exists():
             self._label_lbl.config(fg=T.fg_subtle if muted else T.fg)
@@ -1738,22 +1715,15 @@ class SliderPanel(tk.Frame):
             else:
                 self.set_active(self._active_state)
 
-    # Drawing / hover                                                      #
-
     def _draw_bar(self):
         v = self._value
         r = self.CORNER
-        m = 4   # must match the inset in _build_meter
+        m = 3   # must match the inset in _build_meter
         w = self._meter_w
         usable = METER_H - 2 * m
         bar_h = int(v * usable)
         bottom = METER_H - m
         top_y = bottom - bar_h
-        # Colour by state:
-        #   none / unassigned  → grey (controls nothing)
-        #   inactive (app not running) → dimmed green
-        #   active → normal green→red
-        #   muted handled separately (forced to 0 + red label)
         state = self._active_state
         if state in ("none", "unassigned"):
             colour = T.meter_idle
@@ -1761,7 +1731,7 @@ class SliderPanel(tk.Frame):
             colour = T.meter_dim
         else:
             colour = T.meter_low if v < 0.80 else T.meter_high
-        rr = min(r - m, max(0, bar_h // 2))
+        rr = min(max(1, r - m), max(0, bar_h // 2))
         self._canvas.coords(self._bar_id,
                             *self._round_rect(m, top_y, w - m, bottom, rr))
         self._canvas.itemconfig(self._bar_id, fill=colour)
