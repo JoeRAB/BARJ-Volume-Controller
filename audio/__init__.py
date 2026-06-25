@@ -1,16 +1,43 @@
 """
 AudioController abstract base, platform auto-selection, and the
-AppDetector that polls which apps are currently producing audio.
+AppDetector that polls which apps are running and which are producing audio.
 """
 
 import platform
 import logging
 import threading
-from typing import Callable, List, Optional
 from abc import ABC, abstractmethod
-from typing import List, Optional, Set
+from typing import Callable, List, Optional, Set
 
 logger = logging.getLogger(__name__)
+
+# psutil lets us tell "running but silent" apart from "not running at all".
+# It's optional: without it we fall back to audio-only detection (an app only
+# shows as running when it's actively producing sound).
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
+
+def _running_process_names() -> Set[str]:
+    """Lowercased names of all running processes (empty set if psutil absent)."""
+    if not PSUTIL_AVAILABLE:
+        return set()
+    names = set()
+    for proc in psutil.process_iter(["name"]):
+        try:
+            n = (proc.info.get("name") or "").lower()
+            if n:
+                names.add(n)
+                # Also add the name without a common executable suffix so
+                # "firefox" matches a process called "firefox-bin", etc.
+                if n.endswith(".exe"):
+                    names.add(n[:-4])
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return names
 
 
 class AudioController(ABC):
@@ -111,6 +138,7 @@ class AppDetector:
         self._paused  = False
         self._wake    = threading.Event()   # interrupts the sleep
         self._cached_apps: List[str] = []
+        self._cached_procs: Set[str] = set()  # running process names (psutil)
 
 
     def start(self):
@@ -136,6 +164,10 @@ class AppDetector:
     def get_current_apps(self) -> List[str]:
         return list(self._cached_apps)
 
+    def get_running_processes(self) -> Set[str]:
+        """Lowercased names of running processes (empty if psutil unavailable)."""
+        return set(self._cached_procs)
+
     def get_dropdown_values(self) -> List[str]:
         return self.SPECIAL_TARGETS + self._cached_apps
 
@@ -145,6 +177,8 @@ class AppDetector:
             if not self._paused:
                 try:
                     apps = self.audio.get_running_audio_apps()
+                    # Refresh the running-process set too (cheap, optional).
+                    self._cached_procs = _running_process_names()
                     if apps != self._cached_apps:
                         self._cached_apps = apps
                         if self.callback:

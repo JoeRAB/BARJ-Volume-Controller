@@ -137,9 +137,9 @@ run_dep_check() {
     CHECK_DIR="${1:-}"
 
     # Populate arrays in caller's scope
-    DEP_NAMES=(  "pyserial"  "PyYAML"  "pulsectl"  "pystray"  "Pillow" )
-    DEP_IMPORTS=( "serial"   "yaml"    "pulsectl"  "pystray"  "PIL"    )
-    DEP_PKGS=(   "pyserial"  "pyyaml"  "pulsectl"  "pystray"  "Pillow" )
+    DEP_NAMES=(  "pyserial"  "PyYAML"  "pulsectl"  "pystray"  "Pillow"  "psutil" )
+    DEP_IMPORTS=( "serial"   "yaml"    "pulsectl"  "pystray"  "PIL"     "psutil" )
+    DEP_PKGS=(   "pyserial"  "pyyaml"  "pulsectl"  "pystray"  "Pillow"  "psutil" )
     DEP_STATUS=()
 
     blank

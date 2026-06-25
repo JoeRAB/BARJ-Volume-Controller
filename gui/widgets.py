@@ -1674,7 +1674,7 @@ class SliderPanel(tk.Frame):
             self._label_lbl.config(text=self._label_text)
 
     def set_active(self, state: str):
-        """state: 'active' | 'inactive' | 'none' | 'unassigned'"""
+        """state: 'active' | 'silent' | 'inactive' | 'none' | 'unassigned'"""
         prev = self._active_state
         self._active_state = state
         if not hasattr(self, "_status_dot") or not self._status_dot.winfo_exists():
@@ -1684,6 +1684,7 @@ class SliderPanel(tk.Frame):
         if not self._muted:
             spec = {
                 "active":     (T.ok,        "Active"),
+                "silent":     (T.ok,        "Running (silent)"),
                 "inactive":   (T.warn,      "Not running"),
                 "none":       (T.fg_subtle, "None"),
                 "unassigned": (T.fg_subtle, "Unassigned"),
@@ -1756,7 +1757,7 @@ class SliderPanel(tk.Frame):
         state = self._active_state
         if state in ("none", "unassigned"):
             colour = T.meter_idle
-        elif state == "inactive":
+        elif state in ("inactive", "silent"):
             colour = T.meter_dim
         else:
             colour = T.meter_low if v < 0.80 else T.meter_high

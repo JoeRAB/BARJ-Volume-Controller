@@ -536,20 +536,25 @@ class MainWindow(tk.Tk):
                 [v for v in apps_only if v.lower() not in taken])
 
     def _update_panel_active_states(self):
-        """Refresh app filtering and each slider's ● active / ○ not running /
-        – none / – unassigned indicator."""
+        """Refresh app filtering and each slider's ● active / ◐ running-silent /
+        ○ not running / – none / – unassigned indicator."""
         self._refresh_dropdowns()
         running = [a.lower() for a in
                    (self.detector.get_current_apps() if self.detector else [])]
+        procs = (self.detector.get_running_processes() if self.detector else set())
         for p in self._slider_panels:
             target = p.get_target()
             apps = self._target_apps(target)
             if isinstance(target, list):
                 if not apps:
                     p.set_active("unassigned")
-                # Active if ANY assigned app is currently producing audio
+                # Active if ANY assigned app is currently producing audio.
                 elif any(any(t in app for app in running) for t in apps):
                     p.set_active("active")
+                # Otherwise, if a matching process exists it's running but
+                # silent; if not, it's genuinely not running.
+                elif procs and any(self._proc_matches(t, procs) for t in apps):
+                    p.set_active("silent")
                 else:
                     p.set_active("inactive")
             else:
@@ -562,6 +567,24 @@ class MainWindow(tk.Tk):
                     p.set_active("active")
                 else:
                     p.set_active("inactive")
+
+    @staticmethod
+    def _proc_matches(target: str, procs) -> bool:
+        """True if the assigned app name matches any running process name.
+        Matches loosely so 'firefox' matches 'firefox-bin', 'spotify' matches
+        'spotify.exe', etc. Substring matches require at least 3 chars to avoid
+        spurious hits from very short process names."""
+        t = target.lower()
+        if not t:
+            return False
+        for name in procs:
+            if t == name:
+                return True
+            if len(t) >= 3 and t in name:
+                return True
+            if len(name) >= 3 and name in t:
+                return True
+        return False
 
     # Serial / audio                                                       #
 
@@ -580,13 +603,22 @@ class MainWindow(tk.Tk):
         invert = self.config_mgr.get("sliders","invert",   default=False)
         slider_settings = [self.config_mgr.get_slider_settings(i)
                            for i in range(count)]
+        # Carry the current smoothed levels into the new reader so the meters
+        # keep their positions across a restart instead of dropping to 0.
+        prior_levels = None
         if self.serial_reader:
+            try:
+                prior = self.serial_reader.current_levels()
+                if len(prior) == count:
+                    prior_levels = prior
+            except Exception:
+                prior_levels = None
             self.serial_reader.stop()
         self.serial_reader = SerialReader(
             port=port, baud_rate=baud, num_sliders=count, invert=bool(invert),
             smoothing=smooth, callback=self._on_serial_values,
             error_callback=self._on_serial_error, debug=self.debug,
-            slider_settings=slider_settings)
+            slider_settings=slider_settings, initial_levels=prior_levels)
         self.serial_reader.start()
 
     def _on_serial_values(self, values):
@@ -745,17 +777,42 @@ class MainWindow(tk.Tk):
                        on_save=self._on_settings_saved)
 
     def _on_settings_saved(self):
+        # Snapshot the settings that actually require a serial restart or a
+        # panel rebuild, so we only do that disruptive work when one of them
+        # changed. Otherwise the reader is recreated needlessly and the meters
+        # blank out (smoothing state resets) until the next pot movement.
+        port_before  = self.config_mgr.get("serial", "port", default="")
+        baud_before  = self.config_mgr.get("serial", "baud_rate", default=9600)
+        count_before = self.config_mgr.get("sliders", "count", default=5)
+
         # Apply theme choice ("auto" resolves against the OS setting now)
         pref = self.config_mgr.get("ui", "theme", default="auto")
         before = T.name
         T.apply(pref)
+
+        port_after  = self.config_mgr.get("serial", "port", default="")
+        baud_after  = self.config_mgr.get("serial", "baud_rate", default=9600)
+        count_after = self.config_mgr.get("sliders", "count", default=5)
+
+        serial_changed = (port_before != port_after or
+                          baud_before != baud_after or
+                          count_before != count_after)
+        count_changed = count_before != count_after
+
         if T.name != before:
             self._rebuild_ui()           # full re-skin (includes panels)
-        else:
+        elif count_changed:
             self._rebuild_slider_panels()
             self._load_profile(self.config_mgr.current_profile)
+
         self._refresh_profile_list()     # pick up any imported/restored profiles
-        self._start_serial()
+
+        # Only touch the serial reader if a serial-relevant setting changed (or
+        # there's no reader yet). A theme rebuild already recreates panels, so
+        # the reader's existing smoothed values keep flowing to the new meters.
+        if serial_changed or not self.serial_reader:
+            self._start_serial()
+
         dlg = self._connecting_dialog
         if dlg and dlg.winfo_exists():
             dlg.update_port_display(

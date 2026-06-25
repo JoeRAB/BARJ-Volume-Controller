@@ -50,7 +50,8 @@ class SerialReader:
                  callback: Optional[Callable[[List[float]], None]] = None,
                  error_callback: Optional[Callable[["SerialError"], None]] = None,
                  debug: bool = False, invert: bool = False,
-                 slider_settings: Optional[List[dict]] = None):
+                 slider_settings: Optional[List[dict]] = None,
+                 initial_levels: Optional[List[float]] = None):
         self.port           = port
         self.baud_rate      = baud_rate
         self.num_sliders    = num_sliders
@@ -68,7 +69,13 @@ class SerialReader:
         self._thread: Optional[threading.Thread] = None
         self._running   = False
         self._lock      = threading.Lock()
-        self._smoothed  = [0.0] * num_sliders
+        # Pre-seed smoothed levels from a previous reader when restarting, so
+        # the meters keep showing the right positions instead of dropping to 0
+        # until the next serial frame arrives.
+        if initial_levels and len(initial_levels) == num_sliders:
+            self._smoothed = [float(v) for v in initial_levels]
+        else:
+            self._smoothed = [0.0] * num_sliders
         self._seeded    = False   # first values snap, later ones smooth
         self._last_msg_time = 0.0
         self._connected = False
@@ -90,6 +97,11 @@ class SerialReader:
         self._thread  = threading.Thread(target=self._loop, daemon=True,
                                          name="SerialReader")
         self._thread.start()
+
+    def current_levels(self) -> List[float]:
+        """Snapshot of the internal smoothed raw levels (for seeding a restart)."""
+        with self._lock:
+            return list(self._smoothed)
 
     def stop(self):
         self._running = False
