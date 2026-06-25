@@ -1064,7 +1064,7 @@ class DependencyDialog(tk.Toplevel):
 # Slider Panel
 
 METER_W = 52
-METER_H = 200
+METER_H = 150
 
 
 class SliderSettingsDialog(tk.Toplevel):

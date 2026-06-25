@@ -87,9 +87,14 @@ class MainWindow(tk.Tk):
         self._setup_ttk_style()
         self._build_ui()
 
-        # Enforce a sensible minimum so slider cards never clip (#12)
+        # Allow a fairly compact window. The meter shrinks with the window, so
+        # we don't need the full required height as the floor - just enough that
+        # the header and card controls stay usable. Width scales with the
+        # slider count so cards don't get crushed.
         self.update_idletasks()
-        self.minsize(self.winfo_reqwidth(), self.winfo_reqheight())
+        count = self.config_mgr.get("sliders", "count", default=5)
+        min_w = max(300, 112 * count)
+        self.minsize(min_w, 300)
 
         # Services
         self._start_serial()
