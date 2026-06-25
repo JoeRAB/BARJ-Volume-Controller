@@ -129,9 +129,13 @@ class AppDetector:
 
     def __init__(self, audio_controller,
                  callback: Optional[Callable[[List[str]], None]] = None,
-                 interval: float = 5.0):
+                 interval: float = 5.0,
+                 state_callback: Optional[Callable[[], None]] = None):
         self.audio    = audio_controller
         self.callback = callback
+        # Called (no args) when only the running-process set changed, so the UI
+        # can re-evaluate active/silent/inactive without a full dropdown rebuild.
+        self.state_callback = state_callback
         self.interval = interval
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -178,11 +182,21 @@ class AppDetector:
                 try:
                     apps = self.audio.get_running_audio_apps()
                     # Refresh the running-process set too (cheap, optional).
-                    self._cached_procs = _running_process_names()
-                    if apps != self._cached_apps:
+                    new_procs = _running_process_names()
+                    procs_changed = new_procs != self._cached_procs
+                    self._cached_procs = new_procs
+                    apps_changed = apps != self._cached_apps
+                    if apps_changed:
                         self._cached_apps = apps
-                        if self.callback:
-                            self.callback(self.get_dropdown_values())
+                    # Notify when the audio list changes (full update, rebuilds
+                    # dropdowns) or, more cheaply, when only the running-process
+                    # set changed (re-evaluate states so a silent app that's
+                    # open but never makes sound still updates). Without the
+                    # latter, such an app would never trigger a refresh.
+                    if apps_changed and self.callback:
+                        self.callback(self.get_dropdown_values())
+                    elif procs_changed and self.state_callback:
+                        self.state_callback()
                 except Exception as e:
                     logger.error(f"AppDetector: {e}")
             # Sleep, but wake instantly on resume()/stop()

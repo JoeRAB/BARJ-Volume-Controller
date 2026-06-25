@@ -67,6 +67,7 @@ class MainWindow(tk.Tk):
             audio_controller=self.audio,
             callback=self._on_apps_updated,
             interval=self.APP_POLL_INTERVAL,
+            state_callback=self._on_proc_state_changed,
         ) if self.audio else None
 
         self.serial_reader: Optional[SerialReader] = None
@@ -506,6 +507,12 @@ class MainWindow(tk.Tk):
             self._update_panel_active_states()
         self.after(0, _apply)
 
+    def _on_proc_state_changed(self):
+        # Process set changed (an app opened/closed while silent). Re-evaluate
+        # active/silent/inactive on the main thread, without rebuilding the app
+        # dropdowns (the audio app list hasn't changed).
+        self.after(0, self._update_panel_active_states)
+
     @staticmethod
     def _target_apps(target) -> set:
         """Lower-cased set of app names in a target (empty for specials/none)."""
@@ -543,15 +550,18 @@ class MainWindow(tk.Tk):
                    (self.detector.get_current_apps() if self.detector else [])]
         procs = (self.detector.get_running_processes() if self.detector else set())
         # One-time diagnostic so the log shows whether process detection works
-        # and, if an app reads as "not running", what process names exist.
+        # and, if an app reads as "not running", what process names exist. Wait
+        # until we actually have process data (the detector's first poll may not
+        # have run yet on the very first call) before logging.
         if not getattr(self, "_logged_proc_state", False):
-            self._logged_proc_state = True
             from audio import PSUTIL_AVAILABLE
-            logger.info(f"Process detection: psutil_available={PSUTIL_AVAILABLE}, "
-                        f"{len(procs)} processes seen")
-            if procs:
-                ff = sorted(n for n in procs if "fire" in n or "fox" in n)
-                logger.info(f"Firefox-like processes: {ff or 'none found'}")
+            if procs or not PSUTIL_AVAILABLE:
+                self._logged_proc_state = True
+                logger.info(f"Process detection: psutil_available={PSUTIL_AVAILABLE}, "
+                            f"{len(procs)} processes seen")
+                if procs:
+                    ff = sorted(n for n in procs if "fire" in n or "fox" in n)
+                    logger.info(f"Firefox-like processes: {ff or 'none found'}")
         for p in self._slider_panels:
             target = p.get_target()
             apps = self._target_apps(target)
