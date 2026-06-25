@@ -636,14 +636,14 @@ class SettingsDialog(tk.Toplevel):
 
         # Separator
         tk.Frame(outer, bg=T.separator, height=1
-                 ).grid(row=11, column=0, columnspan=2, sticky="ew", pady=(0,14))
+                 ).grid(row=12, column=0, columnspan=2, sticky="ew", pady=(8,14))
 
         # Backup / import-export
         tk.Label(outer, text="Profiles & Backup", font=F.body_b,
-                 bg=T.bg_surface, fg=T.fg).grid(row=12, column=0, columnspan=2,
+                 bg=T.bg_surface, fg=T.fg).grid(row=13, column=0, columnspan=2,
                                                 sticky="w", pady=(0, 6))
         io = tk.Frame(outer, bg=T.bg_surface)
-        io.grid(row=13, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        io.grid(row=14, column=0, columnspan=2, sticky="w", pady=(0, 4))
         RoundedButton(io, text="Export Profile", command=self._export_profile,
                       style="default", width=130, height=30, font=F.small,
                       bg_under=T.bg_surface).pack(side="left", padx=(0, 6))
@@ -651,21 +651,21 @@ class SettingsDialog(tk.Toplevel):
                       style="default", width=130, height=30, font=F.small,
                       bg_under=T.bg_surface).pack(side="left")
         io2 = tk.Frame(outer, bg=T.bg_surface)
-        io2.grid(row=14, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        RoundedButton(io2, text="Back Up All…", command=self._export_all,
+        io2.grid(row=15, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        RoundedButton(io2, text="Back Up All\u2026", command=self._export_all,
                       style="ghost", width=130, height=28, font=F.tiny,
                       bg_under=T.bg_surface).pack(side="left", padx=(0, 6))
-        RoundedButton(io2, text="Restore All…", command=self._import_all,
+        RoundedButton(io2, text="Restore All\u2026", command=self._import_all,
                       style="ghost", width=130, height=28, font=F.tiny,
                       bg_under=T.bg_surface).pack(side="left")
 
         # Separator
         tk.Frame(outer, bg=T.separator, height=1
-                 ).grid(row=15, column=0, columnspan=2, sticky="ew", pady=(14,14))
+                 ).grid(row=16, column=0, columnspan=2, sticky="ew", pady=(14,14))
 
         # Buttons
         bf = tk.Frame(outer, bg=T.bg_surface)
-        bf.grid(row=16, column=0, columnspan=2)
+        bf.grid(row=17, column=0, columnspan=2)
         RoundedButton(bf, text="Save", command=self._save, style="primary",
                       width=110, height=36, font=F.body_b,
                       bg_under=T.bg_surface).pack(side="left")

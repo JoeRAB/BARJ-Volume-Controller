@@ -40,6 +40,66 @@ def _running_process_names() -> Set[str]:
     return names
 
 
+# Process names that are never user-facing apps you'd assign audio to. Used to
+# keep the assignable-apps list from filling with system daemons and helpers.
+_NON_APP_PROCESSES = {
+    "systemd", "systemd-journald", "systemd-logind", "systemd-udevd",
+    "systemd-resolved", "systemd-timesyncd", "systemd-oomd", "init",
+    "kthreadd", "kworker", "ksoftirqd", "kdevtmpfs", "kcompactd",
+    "dbus-daemon", "dbus-launch", "dbus-broker", "dbus-broker-lau",
+    "pulseaudio", "pipewire", "pipewire-pulse", "pipewire-media-", "wireplumber",
+    "rtkit-daemon", "polkitd", "udisksd", "upowerd", "accounts-daemon",
+    "gvfsd", "gvfsd-fuse", "gvfsd-trash", "gvfsd-metadata", "gvfs-udisks2-vo",
+    "at-spi-bus-laun", "at-spi2-registr", "xdg-desktop-por", "xdg-document-po",
+    "xdg-permission-", "gnome-keyring-d", "gnome-session-b", "gnome-shell",
+    "cinnamon", "cinnamon-launch", "cinnamon-sessio", "csd-", "muffin",
+    "Xorg", "xorg", "Xwayland", "xwayland", "agetty", "login", "sshd",
+    "cron", "crond", "rsyslogd", "snapd", "snap", "fwupd", "colord",
+    "NetworkManager", "networkmanager", "wpa_supplicant", "ModemManager",
+    "avahi-daemon", "cups-browsed", "cupsd", "bluetoothd", "thermald",
+    "irqbalance", "smartd", "uuidd", "packagekitd", "fusermount", "fusermount3",
+    "bash", "sh", "zsh", "fish", "dash", "python", "python3", "perl",
+    "tmux", "screen", "ssh-agent", "gpg-agent", "dconf-service",
+    "barj-volume-con", "main.py",   # the controller itself
+}
+
+
+def _assignable_app_names(audio_apps: List[str]) -> List[str]:
+    """
+    Build the list of apps a slider can be assigned to: every app currently
+    producing audio (always real apps), PLUS other running, user-facing
+    processes (so an open-but-silent app like a paused browser can still be
+    assigned). System daemons and helpers are filtered out. Without psutil,
+    this is just the audio apps (the previous behaviour).
+    """
+    result = {a for a in audio_apps if a}
+    if PSUTIL_AVAILABLE:
+        try:
+            me = psutil.Process().username()
+        except Exception:
+            me = None
+        for proc in psutil.process_iter(["name", "username"]):
+            try:
+                info = proc.info
+                name = (info.get("name") or "").strip()
+                if not name:
+                    continue
+                # Only the current user's processes (skip root/system services).
+                if me is not None and info.get("username") != me:
+                    continue
+                low = name.lower()
+                if low in _NON_APP_PROCESSES:
+                    continue
+                # Skip clearly-namespaced system helpers.
+                if low.startswith(("systemd-", "gvfsd", "csd-", "xdg-",
+                                   "at-spi", "gsd-", "ibus-")):
+                    continue
+                result.add(name)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    return sorted(result, key=str.lower)
+
+
 class AudioController(ABC):
 
     @abstractmethod
@@ -141,8 +201,9 @@ class AppDetector:
         self._running = False
         self._paused  = False
         self._wake    = threading.Event()   # interrupts the sleep
-        self._cached_apps: List[str] = []
+        self._cached_apps: List[str] = []     # apps currently producing audio
         self._cached_procs: Set[str] = set()  # running process names (psutil)
+        self._cached_assignable: List[str] = []  # apps that can be assigned
 
 
     def start(self):
@@ -173,7 +234,7 @@ class AppDetector:
         return set(self._cached_procs)
 
     def get_dropdown_values(self) -> List[str]:
-        return self.SPECIAL_TARGETS + self._cached_apps
+        return self.SPECIAL_TARGETS + self._cached_assignable
 
 
     def _loop(self):
@@ -188,14 +249,21 @@ class AppDetector:
                     apps_changed = apps != self._cached_apps
                     if apps_changed:
                         self._cached_apps = apps
-                    # Notify when the audio list changes (full update, rebuilds
-                    # dropdowns) or, more cheaply, when only the running-process
-                    # set changed (re-evaluate states so a silent app that's
-                    # open but never makes sound still updates). Without the
-                    # latter, such an app would never trigger a refresh.
-                    if apps_changed and self.callback:
+                    # The assignable list = audio apps + other open user apps.
+                    # Rebuild the dropdowns when THIS changes (an app opening or
+                    # closing), so a silent app can still be assigned. Comparing
+                    # the assignable list (not just audio apps) is what makes an
+                    # open-but-silent app appear as an option.
+                    new_assignable = _assignable_app_names(apps)
+                    assignable_changed = new_assignable != self._cached_assignable
+                    if assignable_changed:
+                        self._cached_assignable = new_assignable
+
+                    if assignable_changed and self.callback:
                         self.callback(self.get_dropdown_values())
                     elif procs_changed and self.state_callback:
+                        # Process set changed but the assignable list didn't
+                        # (e.g. a daemon came/went) - just re-evaluate states.
                         self.state_callback()
                 except Exception as e:
                     logger.error(f"AppDetector: {e}")

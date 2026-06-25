@@ -237,12 +237,13 @@ class MainWindow(tk.Tk):
         # Uniform square icon buttons for profile actions. No explicit Save
         # button - changes autosave to the active profile, with a brief
         # "Saved" confirmation in the status bar (Ctrl+S also forces a save).
+        # Larger, plain glyphs (not emoji) so they render clearly everywhere.
         for txt, cmd, tip in [
-            ("\u29c9", self._save_as_profile, "Save as a new profile"),
-            ("\uff0d", self._delete_profile,  "Delete the current profile"),
+            ("+", self._save_as_profile, "Save as a new profile"),
+            ("\u2715", self._delete_profile, "Delete the current profile"),
         ]:
             b = RoundedButton(pf, text=txt, command=cmd, style="ghost",
-                              width=36, height=36, font=F.small_b,
+                              width=38, height=36, font=(F.ui, 16, "bold"),
                               bg_under=T.header_bg)
             b.pack(side="left", padx=2)
             Tooltip(b, tip)
