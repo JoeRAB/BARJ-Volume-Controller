@@ -1545,18 +1545,20 @@ class SliderPanel(tk.Frame):
                                     bg=T.bg_card, fg=T.fg_muted, anchor="w")
         self._status_txt.pack(side="left", padx=(7, 0))
 
-        # VU meter: a Canvas that fills horizontally so the bar widens with the
-        # window; height stays fixed. Wrapped in a 1px frame for a crisp edge.
+        # VU meter: a Canvas that fills its frame in BOTH axes, so the bar
+        # widens and grows taller with the window. Wrapped in a 1px frame for a
+        # crisp edge. Tracked width/height are updated on <Configure>.
         meter_wrap = tk.Frame(inner, bg=T.border)
-        meter_wrap.pack(fill="x", pady=(0, 4))
+        meter_wrap.pack(fill="both", expand=True, pady=(0, 4))
         meter_frame = tk.Frame(meter_wrap, bg=T.bg_card)
-        meter_frame.pack(fill="x", padx=1, pady=1)
+        meter_frame.pack(fill="both", expand=True, padx=1, pady=1)
         self._meter_w = METER_W
+        self._meter_h = METER_H
         self._last_pct = -1
         self._canvas = tk.Canvas(meter_frame, width=METER_W,
                                  height=METER_H, bg=T.meter_track,
                                  highlightthickness=0)
-        self._canvas.pack(fill="x")
+        self._canvas.pack(fill="both", expand=True)
         self._canvas.bind("<Configure>", self._on_meter_resize)
         self._build_meter()
 
@@ -1571,26 +1573,33 @@ class SliderPanel(tk.Frame):
                 x2-r, y2, x1+r, y2, x1, y2, x1, y2-r, x1, y1+r, x1, y1]
 
     def _on_meter_resize(self, event):
+        changed = False
         if event.width > 1 and abs(event.width - self._meter_w) >= 1:
             self._meter_w = event.width
+            changed = True
+        if event.height > 1 and abs(event.height - self._meter_h) >= 1:
+            self._meter_h = event.height
+            changed = True
+        if changed:
             self._build_meter()
-            self._last_pct = -2
+            self._last_pct = -2     # force the fill bar to redraw at new size
             self.set_value(self._value)
 
     def _build_meter(self):
         w = self._meter_w
+        h = self._meter_h
         r = self.CORNER
         m = 3   # inset margin so the fill sits inside the track
         self._canvas.delete("all")
         self._track_id = self._canvas.create_polygon(
-            self._round_rect(0, 0, w, METER_H, r),
+            self._round_rect(0, 0, w, h, r),
             smooth=True, splinesteps=8, fill=T.meter_track, outline="")
         self._bar_id = self._canvas.create_polygon(
-            self._round_rect(m, METER_H - m, w - m, METER_H - m, max(1, r - m)),
+            self._round_rect(m, h - m, w - m, h - m, max(1, r - m)),
             smooth=True, splinesteps=8, fill=T.meter_low, outline="")
         # Subtle tick marks at the quarter lines.
         for pct in (0.25, 0.50, 0.75):
-            y = int(METER_H * (1 - pct))
+            y = int(h * (1 - pct))
             self._canvas.create_line(w - 9, y, w - 4, y,
                                      fill=T.fg_subtle, width=1)
 
@@ -1720,9 +1729,10 @@ class SliderPanel(tk.Frame):
         r = self.CORNER
         m = 3   # must match the inset in _build_meter
         w = self._meter_w
-        usable = METER_H - 2 * m
+        h = self._meter_h
+        usable = h - 2 * m
         bar_h = int(v * usable)
-        bottom = METER_H - m
+        bottom = h - m
         top_y = bottom - bar_h
         state = self._active_state
         if state in ("none", "unassigned"):

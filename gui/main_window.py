@@ -31,7 +31,7 @@ class MainWindow(tk.Tk):
         super().__init__()
         self.debug = debug
         self.title(APP_TITLE)
-        self.resizable(True, False)
+        self.resizable(True, True)
 
         # Catch any exception raised inside a tkinter callback (e.g. while
         # applying a slider value) so a transient glitch from a bad solder
