@@ -542,6 +542,16 @@ class MainWindow(tk.Tk):
         running = [a.lower() for a in
                    (self.detector.get_current_apps() if self.detector else [])]
         procs = (self.detector.get_running_processes() if self.detector else set())
+        # One-time diagnostic so the log shows whether process detection works
+        # and, if an app reads as "not running", what process names exist.
+        if not getattr(self, "_logged_proc_state", False):
+            self._logged_proc_state = True
+            from audio import PSUTIL_AVAILABLE
+            logger.info(f"Process detection: psutil_available={PSUTIL_AVAILABLE}, "
+                        f"{len(procs)} processes seen")
+            if procs:
+                ff = sorted(n for n in procs if "fire" in n or "fox" in n)
+                logger.info(f"Firefox-like processes: {ff or 'none found'}")
         for p in self._slider_panels:
             target = p.get_target()
             apps = self._target_apps(target)
