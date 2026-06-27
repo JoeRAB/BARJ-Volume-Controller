@@ -38,6 +38,15 @@ const int SLIDER_PINS[NUM_SLIDERS] = {
   A4,   // Slider 5
 };
 
+// --- Wiring direction ---
+// false = raw readings, exactly like the stock deej sketch (pins A0..A4 read
+// in order, no inversion). This matches standard deej wiring, where each pot's
+// wiper goes to its analog pin with the outer legs on 5V and GND so that
+// turning UP raises the value. Leave this false if your build follows deej.
+// Set it true only if turning a pot UP makes the value go DOWN (outer legs
+// swapped); if just some pots are reversed, fix those per-slider in the app.
+const bool INVERT_ALL = false;
+
 // --- Behaviour tuning (most people can leave these alone) ---
 const int           DEADBAND     = 2;     // ignore jitter below ~0.2%
 const unsigned long HEARTBEAT_MS = 500;   // max silence between sends (ms)
@@ -86,7 +95,11 @@ void updateSliderValues() {
   for (int i = 0; i < NUM_SLIDERS; i++) {
     analogRead(SLIDER_PINS[i]);            // throwaway: settles the S&H cap
     delayMicroseconds(10);                 // brief settle on the new channel
-    analogSliderValues[i] = analogRead(SLIDER_PINS[i]);   // real reading
+    int reading = analogRead(SLIDER_PINS[i]);            // real reading
+    if (INVERT_ALL) {
+      reading = 1023 - reading;            // flip so turning up = louder
+    }
+    analogSliderValues[i] = reading;
   }
 }
 

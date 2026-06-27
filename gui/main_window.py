@@ -3,7 +3,7 @@ BARJ Volume Controller main window
 """
 
 import tkinter as tk
-from tkinter import ttk, simpledialog
+from tkinter import ttk
 import logging
 from pathlib import Path
 from typing import List, Optional
@@ -14,7 +14,8 @@ from audio import get_audio_controller, AppDetector
 from gui.theme import T, F, Tooltip, RoundedButton
 from gui.widgets import (SliderPanel, ConnectingDialog, ErrorDialog, CloseDialog,
                          SettingsDialog, DependencyChecker, DependencyDialog,
-                         SliderSettingsDialog, themed_message, themed_confirm)
+                         SliderSettingsDialog, themed_message, themed_confirm,
+                         themed_input)
 from tray_icon import TrayIcon
 
 logger = logging.getLogger(__name__)
@@ -27,9 +28,10 @@ class MainWindow(tk.Tk):
     APP_POLL_INTERVAL   = 1
     CONN_CHECK_INTERVAL = 1000
 
-    def __init__(self, debug: bool = False):
+    def __init__(self, debug: bool = False, start_minimized: bool = False):
         super().__init__()
         self.debug = debug
+        self._start_minimized = start_minimized
         self.title(APP_TITLE)
         self.resizable(True, True)
 
@@ -115,8 +117,12 @@ class MainWindow(tk.Tk):
         # Ctrl+S saves the current profile
         self.bind_all("<Control-s>", lambda e: self._save_profile())
 
-        # Launch minimized to tray if the user enabled it (and a tray exists)
-        if (self.config_mgr.get("ui", "launch_minimized", default=False)
+        # Launch minimized to tray ONLY when started by the start-on-login
+        # entry (which passes --minimized) AND the user enabled it. A manual
+        # launch never starts hidden, so the window always appears when you
+        # open the app yourself.
+        if (self._start_minimized
+                and self.config_mgr.get("ui", "launch_minimized", default=False)
                 and self._tray_available):
             self.after(200, self._do_hide)
 
@@ -486,9 +492,8 @@ class MainWindow(tk.Tk):
         # Capture the live slider assignments first
         self._save_assignments()
         src = self._profile_var.get()
-        new = simpledialog.askstring(
-            "Save As", "Save current profile as:",
-            initialvalue=f"{src} copy", parent=self)
+        new = themed_input(self, "Save As", "Save current profile as:",
+                           initial=f"{src} copy")
         if not new or not new.strip():
             return
         new = new.strip()

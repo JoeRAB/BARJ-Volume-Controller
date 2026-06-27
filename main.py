@@ -111,6 +111,9 @@ def main():
     parser = argparse.ArgumentParser(description="Hardware BARJ Volume Controller")
     parser.add_argument("--debug", action="store_true",
                         help="Print raw and smoothed serial values on every tick.")
+    parser.add_argument("--minimized", action="store_true",
+                        help="Start hidden in the system tray (used by the "
+                             "start-on-login entry; manual launches ignore this).")
     args = parser.parse_args()
 
     # Logging setup
@@ -162,7 +165,7 @@ def main():
         sys.exit(0)
 
     from gui.main_window import MainWindow
-    app = MainWindow(debug=args.debug)
+    app = MainWindow(debug=args.debug, start_minimized=args.minimized)
 
     # Later launches send SHOW - marshal to the GUI thread.
     instance.listen(lambda: app.after(0, app.show_from_external))

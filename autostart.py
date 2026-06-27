@@ -23,23 +23,25 @@ _AUTOSTART_ID = "barj-volume-controller"
 
 
 def _launch_command() -> str:
-    """Best-effort command that re-launches this app.
+    """Best-effort command that re-launches this app for start-on-login.
 
-    Prefers the installed launcher on Linux; otherwise falls back to
+    Always includes --minimized so a boot launch can start hidden in the tray
+    (the app only honours that flag when start-minimized is also enabled in
+    settings). Prefers the installed launcher on Linux; otherwise falls back to
     'python3 /path/to/main.py' (or the frozen exe path under PyInstaller).
     """
     # PyInstaller frozen build: sys.executable IS the app
     if getattr(sys, "frozen", False):
-        return f'"{sys.executable}"'
+        return f'"{sys.executable}" --minimized'
 
     if _SYSTEM == "Linux":
         launcher = Path.home() / ".local" / "bin" / _AUTOSTART_ID
         if launcher.exists():
-            return str(launcher)
+            return f'{launcher} --minimized'
 
     # Fallback: run main.py with the current interpreter
     main_py = Path(__file__).resolve().parent / "main.py"
-    return f'"{sys.executable}" "{main_py}"'
+    return f'"{sys.executable}" "{main_py}" --minimized'
 
 
 # ── Linux ─────────────────────────────────────────────────────────────────────

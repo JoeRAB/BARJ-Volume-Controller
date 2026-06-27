@@ -18,7 +18,7 @@ import subprocess
 import sys
 import tkinter as tk
 from dataclasses import dataclass, field
-from tkinter import ttk, simpledialog, filedialog
+from tkinter import ttk, filedialog
 from typing import Callable, List, Optional
 
 from gui.theme import T, F, RoundedButton, Tooltip
@@ -41,6 +41,9 @@ class _ThemedDialog(tk.Toplevel):
     def __init__(self, parent, title: str, message: str, kind: str = "info",
                  ok_text: str = "OK", cancel_text: Optional[str] = None):
         super().__init__(parent)
+        # Build off-screen, then position, then show - so the dialog appears
+        # already in place instead of flashing at one spot and jumping.
+        self.withdraw()
         self.result = False
         self._kind = kind
         self.title(title)
@@ -52,6 +55,7 @@ class _ThemedDialog(tk.Toplevel):
         self.bind("<Return>", lambda e: self._ok())
         self._build(title, message, ok_text, cancel_text)
         self._center(parent)
+        self.deiconify()
         self.after(10, self._safe_grab)
 
     def _safe_grab(self):
@@ -107,10 +111,11 @@ class _ThemedDialog(tk.Toplevel):
     def _center(self, parent):
         self.update_idletasks()
         try:
+            w = self.winfo_reqwidth()
+            h = self.winfo_reqheight()
             px = parent.winfo_x() + parent.winfo_width() // 2
             py = parent.winfo_y() + parent.winfo_height() // 2
-            self.geometry(f"+{px - self.winfo_reqwidth() // 2}"
-                          f"+{py - self.winfo_reqheight() // 2}")
+            self.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
         except Exception:
             pass
 
@@ -130,6 +135,92 @@ def themed_confirm(parent, title: str, message: str,
     return dlg.result
 
 
+class _ThemedInputDialog(tk.Toplevel):
+    """A small modal text-entry dialog that follows the app theme. Themed
+    replacement for simpledialog.askstring. Result is in .result (the entered
+    string) or None if cancelled."""
+
+    def __init__(self, parent, title: str, prompt: str, initial: str = ""):
+        super().__init__(parent)
+        self.withdraw()
+        self.result = None
+        self.title(title)
+        self.configure(bg=T.bg_surface)
+        self.resizable(False, False)
+        self.transient(parent)
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.bind("<Escape>", lambda e: self._cancel())
+        self.bind("<Return>", lambda e: self._ok())
+        self._build(title, prompt, initial)
+        self._center(parent)
+        self.deiconify()
+        self.after(10, self._safe_grab)
+
+    def _safe_grab(self):
+        try:
+            self.grab_set()
+            self._entry.focus_set()
+            self._entry.select_range(0, "end")
+        except Exception:
+            pass
+
+    def _build(self, title, prompt, initial):
+        tk.Frame(self, bg=T.accent, width=4).place(relx=0, rely=0,
+                                                   relheight=1, anchor="nw")
+        outer = tk.Frame(self, bg=T.bg_surface, padx=26, pady=22)
+        outer.pack()
+
+        tk.Label(outer, text=title, font=F.header,
+                 bg=T.bg_surface, fg=T.fg).pack(anchor="w", pady=(0, 8))
+        tk.Label(outer, text=prompt, font=F.body,
+                 bg=T.bg_surface, fg=T.fg_muted,
+                 wraplength=320, justify="left").pack(anchor="w", pady=(0, 12))
+
+        self._var = tk.StringVar(value=initial)
+        self._entry = tk.Entry(outer, textvariable=self._var, font=F.body,
+                               bg=T.bg_input, fg=T.fg, insertbackground=T.fg,
+                               relief="flat", highlightthickness=1,
+                               highlightbackground=T.border,
+                               highlightcolor=T.accent, width=32)
+        self._entry.pack(fill="x", ipady=6, pady=(0, 18))
+
+        bf = tk.Frame(outer, bg=T.bg_surface)
+        bf.pack(anchor="e")
+        RoundedButton(bf, text="Cancel", command=self._cancel,
+                      style="default", width=100, height=34, font=F.body,
+                      bg_under=T.bg_surface).pack(side="right", padx=(8, 0))
+        RoundedButton(bf, text="OK", command=self._ok,
+                      style="primary", width=100, height=34, font=F.body_b,
+                      bg_under=T.bg_surface).pack(side="right")
+
+    def _ok(self):
+        self.result = self._var.get()
+        self.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.destroy()
+
+    def _center(self, parent):
+        self.update_idletasks()
+        try:
+            w = self.winfo_reqwidth()
+            h = self.winfo_reqheight()
+            px = parent.winfo_x() + parent.winfo_width() // 2
+            py = parent.winfo_y() + parent.winfo_height() // 2
+            self.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
+        except Exception:
+            pass
+
+
+def themed_input(parent, title: str, prompt: str, initial: str = ""):
+    """Themed replacement for simpledialog.askstring. Returns the entered
+    string, or None if cancelled."""
+    dlg = _ThemedInputDialog(parent, title, prompt, initial)
+    parent.wait_window(dlg)
+    return dlg.result
+
+
 
 class CloseDialog(tk.Toplevel):
     """
@@ -142,6 +233,7 @@ class CloseDialog(tk.Toplevel):
 
     def __init__(self, parent: tk.Tk, tray_available: bool):
         super().__init__(parent)
+        self.withdraw()   # build off-screen, position, then show (no jump)
         self.result: Optional[str] = None
         self.remember = False
 
@@ -154,6 +246,7 @@ class CloseDialog(tk.Toplevel):
 
         self._build(tray_available)
         self._center(parent)
+        self.deiconify()
         self.after(10, self._safe_grab)
 
     def _safe_grab(self):
@@ -232,10 +325,11 @@ class CloseDialog(tk.Toplevel):
 
     def _center(self, parent: tk.Tk):
         self.update_idletasks()
+        w = self.winfo_reqwidth()
+        h = self.winfo_reqheight()
         px = parent.winfo_x() + parent.winfo_width()  // 2
         py = parent.winfo_y() + parent.winfo_height() // 2
-        self.geometry(f"+{px - self.winfo_reqwidth() // 2}"
-                      f"+{py - self.winfo_reqheight() // 2}")
+        self.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
 
 
 # Connecting Dialog
@@ -364,9 +458,11 @@ class ConnectingDialog(tk.Toplevel):
 
     def _center(self):
         self.update_idletasks()
+        w = self.winfo_reqwidth()
+        h = self.winfo_reqheight()
         px = self._parent.winfo_x() + self._parent.winfo_width()  // 2
         py = self._parent.winfo_y() + self._parent.winfo_height() // 2
-        self.geometry(f"+{px - self.winfo_reqwidth()//2}+{py - self.winfo_reqheight()//2}")
+        self.geometry(f"{w}x{h}+{px - w//2}+{py - h//2}")
 
 
 # Error Dialog
@@ -382,8 +478,9 @@ class ErrorDialog(tk.Toplevel):
     def __init__(self, parent, kind: str, message: str,
                  raw_line: str = "", on_dismiss: Optional[Callable] = None):
         super().__init__(parent)
+        self.withdraw()   # build off-screen, position, then show
         self._on_dismiss = on_dismiss
-        label, colour_key = _KIND_LABELS.get(kind, ("⚠ Error", "warn"))
+        label, colour_key = _KIND_LABELS.get(kind, ("\u26a0 Error", "warn"))
         colour = getattr(T, colour_key)
         ts = datetime.datetime.now().strftime("%H:%M:%S")
 
@@ -391,10 +488,11 @@ class ErrorDialog(tk.Toplevel):
         self.configure(bg=T.bg_surface)
         self.resizable(False, False)
         self.transient(parent)
-        self.lift()
         self.protocol("WM_DELETE_WINDOW", self._dismiss)
         self._build(label, colour, message, raw_line, ts)
         self._center(parent)
+        self.deiconify()
+        self.lift()
 
     def _build(self, label, colour, message, raw_line, ts):
         outer = tk.Frame(self, bg=T.bg_surface, padx=28, pady=24)
@@ -453,9 +551,11 @@ class ErrorDialog(tk.Toplevel):
 
     def _center(self, parent):
         self.update_idletasks()
+        w = self.winfo_reqwidth()
+        h = self.winfo_reqheight()
         px = parent.winfo_x() + parent.winfo_width()  // 2
         py = parent.winfo_y() + parent.winfo_height() // 2
-        self.geometry(f"+{px-self.winfo_reqwidth()//2}+{py-self.winfo_reqheight()//2}")
+        self.geometry(f"{w}x{h}+{px-w//2}+{py-h//2}")
 
 
 # Settings Dialog
@@ -1699,9 +1799,8 @@ class SliderPanel(tk.Frame):
         self.set_muted(self._muted)
 
     def _begin_rename(self):
-        new = simpledialog.askstring(
-            "Rename Slider", "Label for this slider:",
-            initialvalue=self._label_text, parent=self.winfo_toplevel())
+        new = themed_input(self.winfo_toplevel(), "Rename Slider",
+                           "Label for this slider:", initial=self._label_text)
         if new is None:
             return
         new = new.strip() or f"Slider {self.index + 1}"
