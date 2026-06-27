@@ -649,9 +649,17 @@ class SettingsDialog(tk.Toplevel):
                  command=lambda v: self._smooth_lbl.config(text=f"{float(v):.2f}")
                  ).pack(side="left")
 
-        tk.Label(outer, text="← more smooth   more responsive →",
-                 font=F.tiny, bg=T.bg_surface, fg=T.fg_subtle
-                 ).grid(row=5, column=0, columnspan=2, pady=(0,16))
+        # Hint sits under the slider (column 1) and matches its 140px width so
+        # "more smooth" and "more responsive" line up with the slider's ends.
+        hint = tk.Frame(outer, bg=T.bg_surface)
+        hint.grid(row=5, column=1, sticky="w", pady=(0, 16))
+        hwrap = tk.Frame(hint, bg=T.bg_surface, width=140, height=16)
+        hwrap.pack(side="left")
+        hwrap.pack_propagate(False)
+        tk.Label(hwrap, text="\u2190 smoother", font=F.tiny,
+                 bg=T.bg_surface, fg=T.fg_muted).pack(side="left")
+        tk.Label(hwrap, text="snappier \u2192", font=F.tiny,
+                 bg=T.bg_surface, fg=T.fg_muted).pack(side="right")
 
         # When closing window
         row("Close Button", 6)
@@ -1607,7 +1615,7 @@ class SliderPanel(tk.Frame):
         self._label_lbl = tk.Label(hdr, text=self._label_text,
                                     font=F.body_b, bg=T.bg_card, fg=T.fg,
                                     anchor="w", cursor="hand2")
-        self._label_lbl.pack(side="left", padx=(10, 0))
+        self._label_lbl.pack(side="left", padx=(10, 12))
         self._label_lbl.bind("<Button-1>", lambda e: self._begin_rename())
 
         pencil = tk.Label(hdr, text="\u270e", font=F.body, bg=T.bg_card,

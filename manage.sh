@@ -19,6 +19,17 @@ warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 die()     { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
 blank()   { echo ""; }
 
+# Overall progress: each install/update step calls step_header to print
+# "[ Step N of TOTAL ]" so the user can see how far along the whole process is.
+STEP_NUM=0
+STEP_TOTAL=6
+step_begin() { STEP_NUM=0; STEP_TOTAL="${1:-6}"; }
+step_header() {
+    STEP_NUM=$((STEP_NUM + 1))
+    blank
+    echo -e "${BOLD}${CYAN}[ Step ${STEP_NUM} of ${STEP_TOTAL} ]${RESET} ${BOLD}$*${RESET}"
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || echo /tmp)"
 APP_NAME="barj-volume-controller"
 APP_DISPLAY="BARJ Volume Controller"
@@ -47,7 +58,9 @@ bootstrap_if_needed() {
             || die "git clone failed. Check your connection or the repo URL."
         SRC="$tmp/src"
     elif command -v curl &>/dev/null; then
-        curl -fsSL "$REPO_URL/archive/refs/heads/$REPO_BRANCH.tar.gz" \
+        # -fL keeps fail-on-error + follow-redirects; dropping -s and adding
+        # --progress-bar shows curl's live download bar instead of silence.
+        curl -fL --progress-bar "$REPO_URL/archive/refs/heads/$REPO_BRANCH.tar.gz" \
             -o "$tmp/src.tar.gz" || die "Download failed."
         mkdir -p "$tmp/src" && tar -xzf "$tmp/src.tar.gz" -C "$tmp/src" --strip-components=1
         SRC="$tmp/src"
@@ -176,7 +189,7 @@ run_dep_check() {
 
 step_system_packages() {
     local mgr="$1"
-    info "Installing system packages…"
+    step_header "Installing system packages"
     [[ "$mgr" == "apt" ]] && sudo apt-get update -qq
     case "$mgr" in
         apt)
@@ -209,7 +222,7 @@ step_system_packages() {
 
 step_venv() {
     local install_dir="$1"
-    info "Creating Python virtual environment…"
+    step_header "Creating Python virtual environment"
     [[ -d "$install_dir/venv" ]] && rm -rf "$install_dir/venv"
 
     # --system-site-packages lets the venv import the apt-installed GTK /
@@ -230,19 +243,24 @@ step_venv() {
 
 step_pip() {
     local install_dir="$1"
-    info "Installing Python packages into venv…"
+    step_header "Installing Python packages"
     local venv_pip="$install_dir/venv/bin/pip"
     "$venv_pip" install --upgrade pip --quiet
+    # Show pip's live download/build progress (no --quiet) so the user sees
+    # real-time bars for each package. Each package is announced first.
     for i in "${!DEP_NAMES[@]}"; do
-        "$venv_pip" install "${DEP_PKGS[$i]}" --quiet \
-            && echo -e "    ${GREEN}✓${RESET} ${DEP_NAMES[$i]}" \
-            || echo -e "    ${YELLOW}⚠${RESET} ${DEP_NAMES[$i]} (failed)"
+        echo -e "  ${CYAN}→${RESET} ${BOLD}${DEP_NAMES[$i]}${RESET}"
+        if "$venv_pip" install "${DEP_PKGS[$i]}" --progress-bar on; then
+            echo -e "    ${GREEN}✓${RESET} ${DEP_NAMES[$i]}"
+        else
+            echo -e "    ${YELLOW}⚠${RESET} ${DEP_NAMES[$i]} (failed)"
+        fi
     done
 }
 
 step_copy_files() {
     local install_dir="$1"
-    info "Copying application files…"
+    step_header "Copying application files"
     # Remove previously-installed app code first so renamed/deleted modules
     # don't linger and cause stale-import bugs. The venv and anything else
     # (logs, etc.) are left untouched; config lives elsewhere entirely.
@@ -263,7 +281,7 @@ step_copy_files() {
 
 step_launcher() {
     local install_dir="$1"
-    info "Creating launcher and app menu entry…"
+    step_header "Creating launcher and app menu entry"
 
     mkdir -p "$BIN_DIR" "$DESKTOP_DIR"
 
@@ -299,7 +317,7 @@ DESKTOP
 }
 
 step_serial_group() {
-    info "Checking serial port group…"
+    step_header "Configuring serial port access"
     local grp=""
     for g in dialout uucp; do
         getent group "$g" &>/dev/null && grp="$g" && break
@@ -367,6 +385,7 @@ do_install() {
     blank
 
     NEEDS_RELOGIN=false
+    step_begin 6
     if ! mkdir -p "$install_dir" 2>/dev/null; then
         die "Cannot create '$install_dir' (permission denied).
        Choose a location inside your home folder, or pre-create it with sudo
@@ -412,6 +431,7 @@ do_update() {
     esac
 
     NEEDS_RELOGIN=false
+    step_begin 6
 
     step_system_packages "$pkg_mgr"
     step_venv            "$install_dir"

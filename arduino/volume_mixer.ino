@@ -39,13 +39,23 @@ const int SLIDER_PINS[NUM_SLIDERS] = {
 };
 
 // --- Wiring direction ---
-// false = raw readings, exactly like the stock deej sketch (pins A0..A4 read
-// in order, no inversion). This matches standard deej wiring, where each pot's
-// wiper goes to its analog pin with the outer legs on 5V and GND so that
-// turning UP raises the value. Leave this false if your build follows deej.
-// Set it true only if turning a pot UP makes the value go DOWN (outer legs
-// swapped); if just some pots are reversed, fix those per-slider in the app.
+// false = raw readings, no inversion (standard deej behaviour). This is correct
+// for normal wiring where each pot's wiper goes to its analog pin, with the
+// outer legs on 5V and GND such that fully LEFT reads ~0 and fully RIGHT reads
+// ~1023. Set this true only if a build reads backwards in software; the cleaner
+// fix for backwards pots is to swap that pot's two outer legs (5V and GND).
 const bool INVERT_ALL = false;
+
+// --- Edge snapping ---
+// Real pots rarely read an exact 0 at the bottom or 1023 at the top - the
+// wiper doesn't quite reach the track ends and the ADC has a little noise, so
+// you often see e.g. 3..1019 instead of 0..1023. With SNAP_EDGES on, any
+// reading within EDGE_MARGIN counts of an end is pulled to a clean 0 or 1023,
+// so the serial log shows a true 0 when a pot is fully off (and 1023 when
+// fully on). Increase EDGE_MARGIN if your pot still doesn't quite hit 0/1023;
+// decrease it (or turn this off) if you want the unmodified raw values.
+const bool SNAP_EDGES  = true;
+const int  EDGE_MARGIN = 8;    // counts from each end that snap to 0 / 1023
 
 // --- Behaviour tuning (most people can leave these alone) ---
 const int           DEADBAND     = 2;     // ignore jitter below ~0.2%
@@ -98,6 +108,10 @@ void updateSliderValues() {
     int reading = analogRead(SLIDER_PINS[i]);            // real reading
     if (INVERT_ALL) {
       reading = 1023 - reading;            // flip so turning up = louder
+    }
+    if (SNAP_EDGES) {
+      if (reading <= EDGE_MARGIN)          reading = 0;      // fully off -> 0
+      else if (reading >= 1023 - EDGE_MARGIN) reading = 1023; // fully on -> 1023
     }
     analogSliderValues[i] = reading;
   }
