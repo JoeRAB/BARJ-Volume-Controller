@@ -90,6 +90,16 @@ class SerialReader:
             d.update(self.slider_settings[index])
         return d
 
+    def set_muted(self, index: int, muted: bool):
+        """Update one slider's mute state live (no reader restart needed). The
+        next frame applies it via _slider_setting()."""
+        with self._lock:
+            while len(self.slider_settings) <= index:
+                self.slider_settings.append({})
+            if self.slider_settings[index] is None:
+                self.slider_settings[index] = {}
+            self.slider_settings[index]["muted"] = bool(muted)
+
     def start(self):
         if not SERIAL_AVAILABLE:
             return

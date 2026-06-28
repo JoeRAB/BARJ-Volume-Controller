@@ -1576,7 +1576,8 @@ class SliderPanel(tk.Frame):
     def __init__(self, parent, index: int,
                  on_change: Optional[Callable] = None,
                  on_label_change: Optional[Callable] = None,
-                 on_settings: Optional[Callable] = None, **kw):
+                 on_settings: Optional[Callable] = None,
+                 on_mute: Optional[Callable] = None, **kw):
         super().__init__(parent, bg=T.bg_card,
                          highlightbackground=T.border,
                          highlightthickness=1, **kw)
@@ -1584,6 +1585,7 @@ class SliderPanel(tk.Frame):
         self._on_change      = on_change
         self._on_label_change = on_label_change
         self._on_settings    = on_settings
+        self._on_mute        = on_mute
         self._value          = 0.0
         self._active_state   = "unassigned"
         self._label_text     = f"Slider {index + 1}"
@@ -1632,7 +1634,18 @@ class SliderPanel(tk.Frame):
         gear.bind("<Button-1>", lambda e: self._open_settings())
         gear.bind("<Enter>", lambda e: gear.config(fg=T.accent))
         gear.bind("<Leave>", lambda e: gear.config(fg=T.fg_subtle))
-        Tooltip(gear, "Mute, invert, or calibrate this slider")
+        Tooltip(gear, "Invert or calibrate this slider")
+
+        # Mute toggle - a speaker icon directly on the card (not in the menu).
+        # Uses plain text glyphs (not emoji) so it renders on every system.
+        self._mute_btn = tk.Label(hdr, text="\u266a", font=(F.ui, 14, "bold"),
+                                  bg=T.bg_card, fg=T.fg_subtle, cursor="hand2")
+        self._mute_btn.pack(side="right", padx=(0, 8))
+        self._mute_btn.bind("<Button-1>", lambda e: self.toggle_mute())
+        self._mute_btn.bind("<Enter>", lambda e: self._mute_hover(True))
+        self._mute_btn.bind("<Leave>", lambda e: self._mute_hover(False))
+        Tooltip(self._mute_btn, "Mute / unmute this slider")
+        self._update_mute_icon()
 
         # Target selector: a large button that opens the multi-select popup.
         self._target_value = "none"        # str keyword, or list[str] of apps
@@ -1820,8 +1833,34 @@ class SliderPanel(tk.Frame):
         if self._on_settings:
             self._on_settings(self)
 
+    def toggle_mute(self):
+        """Flip mute state from the on-card button, update visuals, and notify
+        main_window (which persists it and applies it to the serial reader)."""
+        self.set_muted(not self._muted)
+        if self._on_mute:
+            self._on_mute(self, self._muted)
+
+    def _mute_hover(self, over: bool):
+        if not hasattr(self, "_mute_btn") or not self._mute_btn.winfo_exists():
+            return
+        if self._muted:
+            self._mute_btn.config(fg=T.err if not over else T.danger_hover)
+        else:
+            self._mute_btn.config(fg=T.accent if over else T.fg_subtle)
+
+    def _update_mute_icon(self):
+        if not hasattr(self, "_mute_btn") or not self._mute_btn.winfo_exists():
+            return
+        if self._muted:
+            # circled-slash: muted, shown in the error colour
+            self._mute_btn.config(text="\u2298", fg=T.err)
+        else:
+            # music note: audio passing through
+            self._mute_btn.config(text="\u266a", fg=T.fg_subtle)
+
     def set_muted(self, muted: bool):
         self._muted = muted
+        self._update_mute_icon()
         if hasattr(self, "_label_lbl") and self._label_lbl.winfo_exists():
             self._label_lbl.config(fg=T.fg_subtle if muted else T.fg)
         if hasattr(self, "_status_txt") and self._status_txt.winfo_exists():

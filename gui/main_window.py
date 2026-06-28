@@ -308,31 +308,37 @@ class MainWindow(tk.Tk):
         # Widgets are recreated (e.g. theme toggle) - force the next
         # connection check to repaint them.
         self._last_conn_state = None
-        bar = tk.Frame(self, bg=T.status_bg, pady=6)
+        bar = tk.Frame(self, bg=T.status_bg)
         bar.pack(fill="x", side="bottom")
-        tk.Frame(bar, bg=T.separator, height=1).place(relx=0, rely=0,
-                                                       relwidth=1, anchor="nw")
 
-        # Connection status as a subtle pill (dot + text inside a rounded frame)
-        self._status_pill = tk.Frame(bar, bg=T.status_bg)
-        self._status_pill.pack(side="left", padx=(12, 0))
-        self._status_dot = tk.Label(self._status_pill, text="●", bg=T.status_bg,
+        # Separator line sits at the very top of the bar.
+        tk.Frame(bar, bg=T.separator, height=1).pack(fill="x", side="top")
+
+        # Content row below the separator, with even vertical padding so the
+        # status pill and the config path line up and clear the border line.
+        row = tk.Frame(bar, bg=T.status_bg)
+        row.pack(fill="x", pady=7)
+
+        # Connection status (dot + text)
+        self._status_pill = tk.Frame(row, bg=T.status_bg)
+        self._status_pill.pack(side="left", padx=(14, 0))
+        self._status_dot = tk.Label(self._status_pill, text="\u25cf", bg=T.status_bg,
                                      fg=T.err, font=F.tiny)
-        self._status_dot.pack(side="left", padx=(8, 3), pady=2)
-        self._status_label = tk.Label(self._status_pill, text="Connecting…",
+        self._status_dot.pack(side="left", padx=(0, 5))
+        self._status_label = tk.Label(self._status_pill, text="Connecting\u2026",
                                        bg=T.status_bg, fg=T.err, font=F.tiny)
-        self._status_label.pack(side="left", padx=(0, 10), pady=2)
+        self._status_label.pack(side="left")
 
         # Shortened config path (~/.config/… rather than the full /home/...)
         cfg = str(self.config_mgr.config_path)
         home = str(Path.home())
         if cfg.startswith(home):
             cfg = "~" + cfg[len(home):]
-        tk.Label(bar, text=cfg, bg=T.status_bg, fg=T.fg_subtle, font=F.tiny
-                 ).pack(side="right", padx=12)
+        tk.Label(row, text=cfg, bg=T.status_bg, fg=T.fg_subtle, font=F.tiny
+                 ).pack(side="right", padx=14)
 
         if self.debug:
-            tk.Label(bar, text="DEBUG", bg=T.err, fg="white",
+            tk.Label(row, text="DEBUG", bg=T.err, fg="white",
                      font=F.badge, padx=4).pack(side="right", padx=8)
 
     # Sliders                                                              #
@@ -351,7 +357,8 @@ class MainWindow(tk.Tk):
             p = SliderPanel(self._body, index=i,
                             on_change=self._on_slider_changed,
                             on_label_change=self._on_label_changed,
-                            on_settings=self._open_slider_settings)
+                            on_settings=self._open_slider_settings,
+                            on_mute=self._on_slider_mute_toggled)
             # sticky="nsew" + equal column weight makes the cards grow to fill
             # the window width (and height), eliminating dead space on resize.
             p.grid(row=0, column=i, padx=10, pady=6, sticky="nsew")
@@ -437,6 +444,13 @@ class MainWindow(tk.Tk):
         for p in self._slider_panels:
             muted = bool(self.config_mgr.get_slider_settings(p.index)["muted"])
             p.set_muted(muted)
+
+    def _on_slider_mute_toggled(self, panel, muted: bool):
+        # Persist the new mute state and apply it to the running serial reader
+        # immediately (no restart - the reader reads slider_settings each frame).
+        self.config_mgr.set_slider_setting(panel.index, "muted", bool(muted))
+        if self.serial_reader:
+            self.serial_reader.set_muted(panel.index, bool(muted))
 
     def _save_profile(self):
         """Explicitly save the current slider setup to the active profile
