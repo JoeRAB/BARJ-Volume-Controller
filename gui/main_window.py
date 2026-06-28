@@ -530,13 +530,43 @@ class MainWindow(tk.Tk):
         def _apply(a=app_list):
             self._last_app_list = a
             self._update_panel_active_states()
+            # A new audio stream just appeared (e.g. the next YouTube video).
+            # It starts at the OS default volume, so re-apply the current slider
+            # levels to it immediately - otherwise it plays at full volume until
+            # the slider is next moved. Forcing a re-apply (skip-tracker reset)
+            # pushes every slider's current value to the new stream.
+            self._reapply_current_levels()
         self.after(0, _apply)
 
+    def _reapply_current_levels(self):
+        """Force the current pot levels to be re-applied to the audio backend,
+        bypassing the 'value hasn't moved' skip. Used when the set of audio
+        apps changes so a newly-appeared stream picks up the slider position."""
+        # Reset the per-slider change tracker so the next apply re-pushes all.
+        self._last_ui_values = []
+        # Also drop the cached assignments so targets are recomputed fresh.
+        self._assignments_cache = None
+        values = None
+        if getattr(self, "_pending_values", None) is not None:
+            values = self._pending_values
+        elif self.serial_reader is not None:
+            try:
+                values = self.serial_reader.current_levels()
+            except Exception:
+                values = None
+        if values:
+            self._apply_values(values, force=True)
+
     def _on_proc_state_changed(self):
-        # Process set changed (an app opened/closed while silent). Re-evaluate
-        # active/silent/inactive on the main thread, without rebuilding the app
-        # dropdowns (the audio app list hasn't changed).
-        self.after(0, self._update_panel_active_states)
+        # Process set or stream count changed (an app opened/closed while silent,
+        # or a new stream started under an existing app - e.g. the next video).
+        # Re-evaluate the status dots AND re-apply the current slider levels so
+        # a newly-started stream picks up the slider position instead of playing
+        # at the OS default volume.
+        def _do():
+            self._update_panel_active_states()
+            self._reapply_current_levels()
+        self.after(0, _do)
 
     @staticmethod
     def _target_apps(target) -> set:
@@ -696,7 +726,7 @@ class MainWindow(tk.Tk):
         starts empty, so initial pot positions apply immediately."""
         self._assignments_cache = None
 
-    def _apply_values(self, values):
+    def _apply_values(self, values, force: bool = False):
         assignments, exclude = self._get_cached_assignments()
         # Pad UI-change tracker to length
         while len(self._last_ui_values) < len(values):
@@ -706,7 +736,9 @@ class MainWindow(tk.Tk):
             if i >= len(values): break
             # Skip panels whose value hasn't visibly moved (saves canvas
             # redraws and audio calls at idle; audio layer also gates).
-            if abs(values[i] - self._last_ui_values[i]) < 0.002:
+            # When force=True (a new stream appeared) we DON'T skip, so the
+            # new stream gets the current level even though the pot is still.
+            if not force and abs(values[i] - self._last_ui_values[i]) < 0.002:
                 continue
             self._last_ui_values[i] = values[i]
             try:   panel.set_value(values[i])
@@ -716,7 +748,7 @@ class MainWindow(tk.Tk):
                 try:
                     self.audio.apply_slider(
                         assignments[i].get("target", ""), values[i],
-                        exclude=exclude)
+                        exclude=exclude, force=force)
                 except Exception as e: logger.debug(f"apply_slider: {e}")
 
     def _on_slider_changed(self, panel):

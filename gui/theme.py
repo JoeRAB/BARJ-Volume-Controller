@@ -238,8 +238,13 @@ class Tooltip:
         except Exception:
             return
         self._tip = _tk.Toplevel(self.widget)
+        # Hide until positioned: building + update_idletasks would otherwise map
+        # the window at (0,0) for a frame, so it flashes in the top-left corner
+        # and then jumps to the cursor. Set borderless first, withdraw, build,
+        # position, then show.
         self._tip.wm_overrideredirect(True)
         self._tip.wm_attributes("-topmost", True)
+        self._tip.withdraw()
         frame = _tk.Frame(self._tip, bg=T.border_strong, padx=1, pady=1)
         frame.pack()
         _tk.Label(frame, text=self.text, bg=T.bg_elevated, fg=T.fg,
@@ -248,6 +253,7 @@ class Tooltip:
         self._tip.update_idletasks()
         w = self._tip.winfo_width()
         self._tip.wm_geometry(f"+{x - w // 2}+{y}")
+        self._tip.deiconify()
 
     def _hide(self, _event=None):
         self._cancel()

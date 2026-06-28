@@ -140,9 +140,9 @@ class LinuxAudioController(AudioController):
 
     # Volume control                                                       #
 
-    def set_master_volume(self, level: float):
+    def set_master_volume(self, level: float, force: bool = False):
         level = _clamp(level)
-        if not self._changed_enough("master", level):
+        if not force and not self._changed_enough("master", level):
             return
         def _do(pulse):
             sink = self._default_sink(pulse)
@@ -156,9 +156,9 @@ class LinuxAudioController(AudioController):
             return sink.volume.value_flat if sink else 0.0
         return self._safe(_do) or 0.0
 
-    def set_app_volume(self, process_name: str, level: float):
+    def set_app_volume(self, process_name: str, level: float, force: bool = False):
         level = _clamp(level)
-        if not self._changed_enough(f"app:{process_name}", level):
+        if not force and not self._changed_enough(f"app:{process_name}", level):
             return
         target = process_name.lower()
         def _do(pulse):
@@ -173,14 +173,14 @@ class LinuxAudioController(AudioController):
                 logger.debug(f"No audio session for '{process_name}'")
         self._safe(_do)
 
-    def set_all_others_volume(self, level: float, exclude):
+    def set_all_others_volume(self, level: float, exclude, force: bool = False):
         """
         Set volume on every sink input NOT matching any excluded target.
         Matching mirrors set_app_volume: case-insensitive substring of the
         process binary or application name.
         """
         level = _clamp(level)
-        if not self._changed_enough("all_others", level):
+        if not force and not self._changed_enough("all_others", level):
             return
         excl = {e.strip().lower() for e in exclude if e and e.strip()}
 
@@ -193,6 +193,13 @@ class LinuxAudioController(AudioController):
                 pulse.volume_set_all_chans(inp, level)
         self._safe(_do)
 
+    def invalidate_stream_cache(self):
+        """Force the next sink_input_list() to re-enumerate, so a newly-created
+        stream (e.g. the next video) is seen immediately rather than after the
+        short TTL cache expires."""
+        self._input_cache = None
+        self._input_cache_time = 0.0
+
     def get_running_audio_apps(self) -> List[str]:
         def _do(pulse):
             apps = set()
@@ -203,3 +210,8 @@ class LinuxAudioController(AudioController):
                     apps.add(name)
             return sorted(apps)
         return self._safe(_do) or []
+
+    def get_stream_count(self) -> int:
+        def _do(pulse):
+            return len(self._sink_inputs(pulse))
+        return self._safe(_do) or 0

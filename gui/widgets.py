@@ -1638,8 +1638,11 @@ class SliderPanel(tk.Frame):
 
         # Mute toggle - a speaker icon directly on the card (not in the menu).
         # Uses plain text glyphs (not emoji) so it renders on every system.
+        # Fixed width so swapping the glyph (note <-> muted) never changes the
+        # button's footprint - otherwise the header (and window) resizes on mute.
         self._mute_btn = tk.Label(hdr, text="\u266a", font=(F.ui, 14, "bold"),
-                                  bg=T.bg_card, fg=T.fg_subtle, cursor="hand2")
+                                  bg=T.bg_card, fg=T.fg_subtle, cursor="hand2",
+                                  width=2)
         self._mute_btn.pack(side="right", padx=(0, 8))
         self._mute_btn.bind("<Button-1>", lambda e: self.toggle_mute())
         self._mute_btn.bind("<Enter>", lambda e: self._mute_hover(True))
@@ -1656,15 +1659,19 @@ class SliderPanel(tk.Frame):
             bg_under=T.bg_card)
         self._target_btn.pack(fill="x")
 
-        # Status: coloured dot + short label.
+        # Status: coloured dot + short label. The label has a FIXED character
+        # width so its requested size never changes with the wording (e.g. when
+        # it switches to "Muted"). Without this, different-length status strings
+        # change the card's required width and the window resizes on mute.
         status_row = tk.Frame(inner, bg=T.bg_card)
         status_row.pack(fill="x", pady=(12, 16))
         self._status_dot = tk.Label(status_row, text="\u25cf", font=F.small,
                                     bg=T.bg_card, fg=T.fg_subtle)
         self._status_dot.pack(side="left")
         self._status_txt = tk.Label(status_row, text="Unassigned", font=F.small,
-                                    bg=T.bg_card, fg=T.fg_muted, anchor="w")
-        self._status_txt.pack(side="left", padx=(7, 0))
+                                    bg=T.bg_card, fg=T.fg_muted, anchor="w",
+                                    width=16)
+        self._status_txt.pack(side="left", fill="x", expand=True, padx=(7, 0))
 
         # VU meter: a Canvas that fills its frame in BOTH axes, so the bar
         # widens and grows taller with the window. Wrapped in a 1px frame for a
