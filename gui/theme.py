@@ -184,9 +184,6 @@ class ThemeManager:
             name = detect_system_theme()
         self._p = _PALETTES.get(name, _DARK)
 
-    def toggle(self):
-        self.apply("light" if self._p.name == "dark" else "dark")
-
     @property
     def name(self) -> str:
         return self._p.name
@@ -375,13 +372,4 @@ class RoundedButton(_tk.Canvas):
 
     def set_text(self, text):
         self._text = text
-        self._redraw()
-
-    def set_enabled(self, enabled: bool):
-        self._enabled = enabled
-        self._redraw()
-
-    def refresh_theme(self):
-        self._bg_under = T.bg_surface if self._style != "ghost" else self._bg_under
-        self.configure(bg=self._bg_under)
         self._redraw()

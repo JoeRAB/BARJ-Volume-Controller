@@ -26,8 +26,51 @@ from gui.theme import T, F, RoundedButton, Tooltip
 DOTS = ["   ", ".  ", ".. ", "..."]
 
 
+class _CenteredDialog:
+    """Mixin for the modal Toplevel dialogs.
 
-class _ThemedDialog(tk.Toplevel):
+    Consolidates three things every dialog used to copy verbatim:
+      * _safe_grab()       - grab_set() that won't raise if the window's gone
+      * _center(parent)    - position centred over the parent window
+      * _present(parent)   - the exact anti-flash reveal sequence:
+                             center off-screen, deiconify, then grab after 10ms
+
+    `parent` may be passed explicitly (most dialogs do `self._center(parent)`)
+    or omitted, in which case it falls back to self._parent then self.master.
+    The fallbacks keep both historical call styles working unchanged.
+    """
+
+    def _resolve_parent(self, parent=None):
+        return parent or getattr(self, "_parent", None) or self.master
+
+    def _safe_grab(self):
+        try:
+            self.grab_set()
+        except Exception:
+            pass
+
+    def _center(self, parent=None):
+        parent = self._resolve_parent(parent)
+        self.update_idletasks()
+        try:
+            w = self.winfo_reqwidth()
+            h = self.winfo_reqheight()
+            px = parent.winfo_x() + parent.winfo_width()  // 2
+            py = parent.winfo_y() + parent.winfo_height() // 2
+            self.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
+        except Exception:
+            pass
+
+    def _present(self, parent=None):
+        """Reveal the dialog already in position (no flash-then-jump): the
+        caller builds content while withdrawn, then calls this to center,
+        show, and grab focus."""
+        self._center(parent)
+        self.deiconify()
+        self.after(10, self._safe_grab)
+
+
+class _ThemedDialog(_CenteredDialog, tk.Toplevel):
     """A small modal dialog that follows the app theme. Used for info /
     warning / error messages and yes/no confirmations, so popups match the
     light/dark theme instead of using the unthemed OS messagebox.
@@ -57,10 +100,6 @@ class _ThemedDialog(tk.Toplevel):
         self._center(parent)
         self.deiconify()
         self.after(10, self._safe_grab)
-
-    def _safe_grab(self):
-        try: self.grab_set()
-        except Exception: pass
 
     def _accent_for_kind(self):
         return {"info": T.accent, "warning": T.warn,
@@ -108,17 +147,6 @@ class _ThemedDialog(tk.Toplevel):
         self.result = False
         self.destroy()
 
-    def _center(self, parent):
-        self.update_idletasks()
-        try:
-            w = self.winfo_reqwidth()
-            h = self.winfo_reqheight()
-            px = parent.winfo_x() + parent.winfo_width() // 2
-            py = parent.winfo_y() + parent.winfo_height() // 2
-            self.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
-        except Exception:
-            pass
-
 
 def themed_message(parent, title: str, message: str, kind: str = "info"):
     """Themed replacement for messagebox.showinfo/showwarning/showerror."""
@@ -135,7 +163,7 @@ def themed_confirm(parent, title: str, message: str,
     return dlg.result
 
 
-class _ThemedInputDialog(tk.Toplevel):
+class _ThemedInputDialog(_CenteredDialog, tk.Toplevel):
     """A small modal text-entry dialog that follows the app theme. Themed
     replacement for simpledialog.askstring. Result is in .result (the entered
     string) or None if cancelled."""
@@ -201,17 +229,6 @@ class _ThemedInputDialog(tk.Toplevel):
         self.result = None
         self.destroy()
 
-    def _center(self, parent):
-        self.update_idletasks()
-        try:
-            w = self.winfo_reqwidth()
-            h = self.winfo_reqheight()
-            px = parent.winfo_x() + parent.winfo_width() // 2
-            py = parent.winfo_y() + parent.winfo_height() // 2
-            self.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
-        except Exception:
-            pass
-
 
 def themed_input(parent, title: str, prompt: str, initial: str = ""):
     """Themed replacement for simpledialog.askstring. Returns the entered
@@ -222,7 +239,7 @@ def themed_input(parent, title: str, prompt: str, initial: str = ""):
 
 
 
-class CloseDialog(tk.Toplevel):
+class CloseDialog(_CenteredDialog, tk.Toplevel):
     """
     Result is read from .result after the dialog closes:
         "tray"  - minimize to system tray
@@ -245,13 +262,7 @@ class CloseDialog(tk.Toplevel):
         self.bind("<Escape>", lambda e: self._cancel())
 
         self._build(tray_available)
-        self._center(parent)
-        self.deiconify()
-        self.after(10, self._safe_grab)
-
-    def _safe_grab(self):
-        try: self.grab_set()
-        except Exception: pass
+        self._present(parent)
 
 
     def _build(self, tray_available: bool):
@@ -323,19 +334,11 @@ class CloseDialog(tk.Toplevel):
         self.result = None
         self.destroy()
 
-    def _center(self, parent: tk.Tk):
-        self.update_idletasks()
-        w = self.winfo_reqwidth()
-        h = self.winfo_reqheight()
-        px = parent.winfo_x() + parent.winfo_width()  // 2
-        py = parent.winfo_y() + parent.winfo_height() // 2
-        self.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
-
 
 # Connecting Dialog
 
 
-class ConnectingDialog(tk.Toplevel):
+class ConnectingDialog(_CenteredDialog, tk.Toplevel):
     POLL_MS = 500
 
     def __init__(self, parent, get_port: Callable, list_ports: Callable,
@@ -456,14 +459,6 @@ class ConnectingDialog(tk.Toplevel):
         self._cancel_anim()
         if self.winfo_exists(): self.withdraw()
 
-    def _center(self):
-        self.update_idletasks()
-        w = self.winfo_reqwidth()
-        h = self.winfo_reqheight()
-        px = self._parent.winfo_x() + self._parent.winfo_width()  // 2
-        py = self._parent.winfo_y() + self._parent.winfo_height() // 2
-        self.geometry(f"{w}x{h}+{px - w//2}+{py - h//2}")
-
 
 # Error Dialog
 
@@ -474,7 +469,7 @@ _KIND_LABELS = {
 }
 
 
-class ErrorDialog(tk.Toplevel):
+class ErrorDialog(_CenteredDialog, tk.Toplevel):
     def __init__(self, parent, kind: str, message: str,
                  raw_line: str = "", on_dismiss: Optional[Callable] = None):
         super().__init__(parent)
@@ -549,21 +544,13 @@ class ErrorDialog(tk.Toplevel):
         if self._on_dismiss: self._on_dismiss()
         if self.winfo_exists(): self.destroy()
 
-    def _center(self, parent):
-        self.update_idletasks()
-        w = self.winfo_reqwidth()
-        h = self.winfo_reqheight()
-        px = parent.winfo_x() + parent.winfo_width()  // 2
-        py = parent.winfo_y() + parent.winfo_height() // 2
-        self.geometry(f"{w}x{h}+{px-w//2}+{py-h//2}")
-
 
 # Settings Dialog
 
 BAUD_RATES = ["9600","19200","38400","57600","115200"]
 
 
-class SettingsDialog(tk.Toplevel):
+class SettingsDialog(_CenteredDialog, tk.Toplevel):
     def __init__(self, parent, config_mgr, list_ports: Callable,
                  on_save: Optional[Callable] = None):
         super().__init__(parent)
@@ -576,10 +563,6 @@ class SettingsDialog(tk.Toplevel):
         self.transient(parent)
         self._build()
         self.after(10, self._safe_grab)
-
-    def _safe_grab(self):
-        try: self.grab_set()
-        except Exception: pass
 
     def _build(self):
         outer = tk.Frame(self, bg=T.bg_surface, padx=28, pady=24)
@@ -981,7 +964,7 @@ class DependencyChecker:
     def all_ok(self): return not self.missing and not any(c.required for c in self.sys_failures)
 
 
-class DependencyDialog(tk.Toplevel):
+class DependencyDialog(_CenteredDialog, tk.Toplevel):
     def __init__(self, parent, checker: DependencyChecker):
         super().__init__(parent)
         self.checker = checker
@@ -993,10 +976,6 @@ class DependencyDialog(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self._close)
         self._build()
         self.after(10, self._safe_grab)
-
-    def _safe_grab(self):
-        try: self.grab_set()
-        except Exception: pass
 
     def _build(self):
         for w in self.winfo_children(): w.destroy()
@@ -1175,7 +1154,7 @@ METER_W = 52
 METER_H = 150
 
 
-class SliderSettingsDialog(tk.Toplevel):
+class SliderSettingsDialog(_CenteredDialog, tk.Toplevel):
     """Per-slider settings: mute, invert, and min/max calibration.
 
     Reads current values from config_mgr.get_slider_settings(index) and
@@ -1215,12 +1194,6 @@ class SliderSettingsDialog(tk.Toplevel):
         # Grab only once the window is actually on-screen - calling grab_set()
         # before the window is viewable raises "grab failed: window not viewable".
         self.after(10, self._safe_grab)
-
-    def _safe_grab(self):
-        try:
-            self.grab_set()
-        except Exception:
-            pass
 
     def _build(self, label):
         outer = tk.Frame(self, bg=T.bg_surface, padx=28, pady=24)
@@ -1392,7 +1365,7 @@ class SliderSettingsDialog(tk.Toplevel):
         self.destroy()
 
 
-class TargetPicker(tk.Toplevel):
+class TargetPicker(_CenteredDialog, tk.Toplevel):
     """Multi-select popup for choosing what a slider controls.
 
     Rules enforced live:
@@ -1429,10 +1402,6 @@ class TargetPicker(tk.Toplevel):
 
         self._build(apps)
         self.after(10, self._safe_grab)
-
-    def _safe_grab(self):
-        try: self.grab_set()
-        except Exception: pass
 
     def _build(self, apps):
         outer = tk.Frame(self, bg=T.bg_surface, padx=24, pady=20)

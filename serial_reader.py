@@ -259,8 +259,12 @@ class SerialReader:
 
         # Fetch each slider's settings ONCE (was built twice per call, ~1000
         # dict-merges/sec). Reused by both the smoothing loop and the final
-        # mapping below.
-        settings = [self._slider_setting(i) for i in range(num)]
+        # mapping below. Built under the lock: set_muted() mutates
+        # slider_settings from the GUI thread, so reading it unlocked would be a
+        # data race. _slider_setting() copies into plain dicts, so the snapshot
+        # is safe to use after the lock is released.
+        with self._lock:
+            settings = [self._slider_setting(i) for i in range(num)]
 
         with self._lock:
             self._last_raw = list(raw)   # under lock - read by get_raw_value()

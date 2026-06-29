@@ -530,43 +530,13 @@ class MainWindow(tk.Tk):
         def _apply(a=app_list):
             self._last_app_list = a
             self._update_panel_active_states()
-            # A new audio stream just appeared (e.g. the next YouTube video).
-            # It starts at the OS default volume, so re-apply the current slider
-            # levels to it immediately - otherwise it plays at full volume until
-            # the slider is next moved. Forcing a re-apply (skip-tracker reset)
-            # pushes every slider's current value to the new stream.
-            self._reapply_current_levels()
         self.after(0, _apply)
 
-    def _reapply_current_levels(self):
-        """Force the current pot levels to be re-applied to the audio backend,
-        bypassing the 'value hasn't moved' skip. Used when the set of audio
-        apps changes so a newly-appeared stream picks up the slider position."""
-        # Reset the per-slider change tracker so the next apply re-pushes all.
-        self._last_ui_values = []
-        # Also drop the cached assignments so targets are recomputed fresh.
-        self._assignments_cache = None
-        values = None
-        if getattr(self, "_pending_values", None) is not None:
-            values = self._pending_values
-        elif self.serial_reader is not None:
-            try:
-                values = self.serial_reader.current_levels()
-            except Exception:
-                values = None
-        if values:
-            self._apply_values(values, force=True)
-
     def _on_proc_state_changed(self):
-        # Process set or stream count changed (an app opened/closed while silent,
-        # or a new stream started under an existing app - e.g. the next video).
-        # Re-evaluate the status dots AND re-apply the current slider levels so
-        # a newly-started stream picks up the slider position instead of playing
-        # at the OS default volume.
-        def _do():
-            self._update_panel_active_states()
-            self._reapply_current_levels()
-        self.after(0, _do)
+        # The set of running/audible apps changed. Just re-evaluate the status
+        # dots - the per-frame volume application already keeps every stream
+        # (including any newly-appeared one) at the slider's level.
+        self.after(0, self._update_panel_active_states)
 
     @staticmethod
     def _target_apps(target) -> set:
@@ -718,15 +688,13 @@ class MainWindow(tk.Tk):
         return self._assignments_cache
 
     def _invalidate_assignments(self):
-        """Drop the cached profile mapping. Deliberately does NOT force a
-        volume re-send: switching profiles or reassigning a slider must not
-        push the current pot positions onto the newly-assigned apps. A
-        target's volume only changes when its pot physically moves
-        ("pickup" behaviour). Launch is the one exception - the tracker
-        starts empty, so initial pot positions apply immediately."""
+        """Drop the cached profile mapping so the next frame recomputes targets
+        and the all_others exclude set. Cheap - just clears the cache; the
+        per-frame apply rebuilds it on demand. Called when the profile changes
+        or a slider is reassigned."""
         self._assignments_cache = None
 
-    def _apply_values(self, values, force: bool = False):
+    def _apply_values(self, values):
         assignments, exclude = self._get_cached_assignments()
         # Pad UI-change tracker to length
         while len(self._last_ui_values) < len(values):
@@ -734,22 +702,26 @@ class MainWindow(tk.Tk):
 
         for i, panel in enumerate(self._slider_panels):
             if i >= len(values): break
-            # Skip panels whose value hasn't visibly moved (saves canvas
-            # redraws and audio calls at idle; audio layer also gates).
-            # When force=True (a new stream appeared) we DON'T skip, so the
-            # new stream gets the current level even though the pot is still.
-            if not force and abs(values[i] - self._last_ui_values[i]) < 0.002:
-                continue
-            self._last_ui_values[i] = values[i]
-            try:   panel.set_value(values[i])
-            except Exception as e: logger.debug(f"set_value {i}: {e}")
+            # Always re-apply the audio level every frame. This is how the app
+            # originally worked and it means a NEW audio stream (e.g. the next
+            # video) is brought to the slider's level within one frame, with no
+            # event listener or stream polling needed. The audio backend is
+            # cheap to call repeatedly.
             audio = self.audio
             if audio and i < len(assignments):
                 try:
                     self.audio.apply_slider(
                         assignments[i].get("target", ""), values[i],
-                        exclude=exclude, force=force)
+                        exclude=exclude)
                 except Exception as e: logger.debug(f"apply_slider: {e}")
+            # Only redraw the meter when the value visibly moved - redrawing the
+            # canvas at idle is wasted work and (unlike the audio call) has no
+            # bearing on new-stream behaviour.
+            if abs(values[i] - self._last_ui_values[i]) < 0.002:
+                continue
+            self._last_ui_values[i] = values[i]
+            try:   panel.set_value(values[i])
+            except Exception as e: logger.debug(f"set_value {i}: {e}")
 
     def _on_slider_changed(self, panel):
         if getattr(self, "_loading_profile", False):

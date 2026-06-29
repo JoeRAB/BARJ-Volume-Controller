@@ -1,4 +1,4 @@
-# Volume Mixer — Python dependencies
+# BARJ Volume Controller — Python dependencies
 # Install with:  pip install -r requirements.txt
 
 pyserial>=3.5

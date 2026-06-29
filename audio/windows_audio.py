@@ -5,9 +5,8 @@ Performance notes:
   - The endpoint-volume COM interface is created once and reused
     (refreshed automatically if a call fails, e.g. device change).
   - Audio sessions are cached for SESSION_CACHE_TTL seconds because
-    GetAllSessions() is an expensive COM enumeration.
-  - Volume writes are skipped when the value hasn't moved by MIN_DELTA,
-    so a resting (slightly noisy) potentiometer costs nothing.
+    GetAllSessions() is an expensive COM enumeration. The cache is short
+    so a newly-started stream is picked up quickly.
 
 Install:  pip install pycaw comtypes
 """
@@ -33,7 +32,6 @@ def _clamp(val: float) -> float:
 
 class WindowsAudioController(AudioController):
 
-    MIN_DELTA         = 0.01   # ignore changes smaller than 1%
     SESSION_CACHE_TTL = 1.0    # seconds to reuse the session list
 
     def __init__(self):
@@ -42,16 +40,8 @@ class WindowsAudioController(AudioController):
         self._endpoint = None            # cached IAudioEndpointVolume
         self._sessions = []              # cached session list
         self._sessions_time = 0.0
-        self._last_sent: dict = {}
 
     # Helpers                                                              #
-
-    def _changed_enough(self, key: str, level: float) -> bool:
-        last = self._last_sent.get(key)
-        if last is not None and abs(level - last) < self.MIN_DELTA:
-            return False
-        self._last_sent[key] = level
-        return True
 
     def _get_endpoint(self):
         """Cached endpoint-volume interface; rebuilt on demand."""
@@ -69,18 +59,10 @@ class WindowsAudioController(AudioController):
             self._sessions_time = now
         return self._sessions
 
-    def invalidate_stream_cache(self):
-        """Force the next session enumeration to refresh, so a newly-created
-        stream is seen immediately rather than after the TTL cache expires."""
-        self._sessions = None
-        self._sessions_time = 0.0
-
     # Master                                                               #
 
-    def set_master_volume(self, level: float, force: bool = False):
+    def set_master_volume(self, level: float):
         level = _clamp(level)
-        if not force and not self._changed_enough("master", level):
-            return
         try:
             self._get_endpoint().SetMasterVolumeLevelScalar(level, None)
         except Exception as e:
@@ -112,12 +94,8 @@ class WindowsAudioController(AudioController):
         except Exception:
             return ""
 
-    def set_app_volume(self, process_name: str, level: float, force: bool = False):
+    def set_app_volume(self, process_name: str, level: float):
         level = _clamp(level)
-        if not force and not self._changed_enough(f"app:{process_name}", level):
-            return
-        if force:
-            self._get_sessions(force=True)   # re-enumerate so new streams are seen
         target = process_name.lower()
         try:
             for session in self._get_sessions():
@@ -132,18 +110,13 @@ class WindowsAudioController(AudioController):
         except Exception as e:
             logger.error(f"set_app_volume({process_name}): {e}")
 
-    def set_all_others_volume(self, level: float, exclude: Set[str],
-                              force: bool = False):
+    def set_all_others_volume(self, level: float, exclude: Set[str]):
         """
         Set volume on every session NOT matching any excluded target.
         Matching mirrors set_app_volume: case-insensitive substring of
         the process name.
         """
         level = _clamp(level)
-        if not force and not self._changed_enough("all_others", level):
-            return
-        if force:
-            self._get_sessions(force=True)
         excl = {e.strip().lower() for e in exclude if e and e.strip()}
         try:
             for session in self._get_sessions():
@@ -171,11 +144,3 @@ class WindowsAudioController(AudioController):
         except Exception as e:
             logger.error(f"get_running_audio_apps: {e}")
         return sorted(apps)
-
-    def get_stream_count(self) -> int:
-        try:
-            # Count only active (audio-producing) sessions where possible.
-            return len(self._get_sessions(force=True))
-        except Exception as e:
-            logger.debug(f"get_stream_count: {e}")
-            return 0

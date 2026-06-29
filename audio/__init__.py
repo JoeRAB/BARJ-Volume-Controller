@@ -43,7 +43,7 @@ def _running_process_names() -> Set[str]:
 class AudioController(ABC):
 
     @abstractmethod
-    def set_master_volume(self, level: float, force: bool = False):
+    def set_master_volume(self, level: float):
         """Set the default playback device volume. level is 0.0–1.0."""
 
     @abstractmethod
@@ -51,12 +51,11 @@ class AudioController(ABC):
         """Return current master volume as 0.0–1.0."""
 
     @abstractmethod
-    def set_app_volume(self, process_name: str, level: float, force: bool = False):
+    def set_app_volume(self, process_name: str, level: float):
         """Set volume for all audio sessions belonging to process_name."""
 
     @abstractmethod
-    def set_all_others_volume(self, level: float, exclude: Set[str],
-                              force: bool = False):
+    def set_all_others_volume(self, level: float, exclude: Set[str]):
         """
         Set volume on every running audio app whose name does NOT match
         any entry in `exclude` (the targets assigned to other sliders).
@@ -67,14 +66,8 @@ class AudioController(ABC):
     def get_running_audio_apps(self) -> List[str]:
         """Return sorted list of process names currently producing audio."""
 
-    def get_stream_count(self) -> int:
-        """Number of active audio streams/sessions. Changes when a new stream
-        appears even if it belongs to an app already in the list (e.g. the next
-        video in the same browser). Backends override; default returns 0."""
-        return 0
-
     def apply_slider(self, target, level: float,
-                     exclude: Optional[Set[str]] = None, force: bool = False):
+                     exclude: Optional[Set[str]] = None):
         """
         Route a slider value to its assigned target.
 
@@ -87,17 +80,9 @@ class AudioController(ABC):
 
         `exclude` is the set of app targets assigned to OTHER sliders -
         only used by 'all_others'.
-
-        `force` re-applies the level even if it hasn't changed since last time,
-        and refreshes the backend's stream list first. Used when a NEW audio
-        stream appears (e.g. the next video) so it inherits the slider position
-        instead of playing at the OS default volume.
         """
         if not target:
             return
-
-        if force:
-            self.invalidate_stream_cache()
 
         # Normalise to a list for uniform handling. Special keywords only ever
         # appear as a lone string (the UI forbids mixing them with apps).
@@ -106,22 +91,17 @@ class AudioController(ABC):
             if t == "none":
                 return          # explicit "controls nothing" assignment
             if t == "master":
-                self.set_master_volume(level, force=force)
+                self.set_master_volume(level)
                 return
             if t == "all_others":
-                self.set_all_others_volume(level, exclude or set(), force=force)
+                self.set_all_others_volume(level, exclude or set())
                 return
             targets = [target]
         else:
             targets = [a for a in target if a and a.strip()]
 
         for app in targets:
-            self.set_app_volume(app, level, force=force)
-
-    def invalidate_stream_cache(self):
-        """Drop any cached audio-stream list so the next call re-enumerates.
-        Backends that cache stream lists override this; the default is a no-op."""
-        pass
+            self.set_app_volume(app, level)
 
 
 def get_audio_controller() -> AudioController:
@@ -163,7 +143,6 @@ class AppDetector:
         self._wake    = threading.Event()   # interrupts the sleep
         self._cached_apps: List[str] = []     # apps currently producing audio
         self._cached_procs: Set[str] = set()  # running process names (psutil)
-        self._cached_stream_count: int = 0    # active audio stream count
 
 
     def start(self):
@@ -202,10 +181,10 @@ class AppDetector:
             if not self._paused:
                 try:
                     apps = self.audio.get_running_audio_apps()
-                    # Refresh the running-process set too (cheap, optional).
-                    # This is only used to tell "running but silent" apart from
-                    # "not running" in the per-slider status - NOT for the
-                    # assignment list, which only offers apps making sound.
+                    # Refresh the running-process set too (cheap). Used only to
+                    # tell "running but silent" apart from "not running" in the
+                    # per-slider status - NOT for the assignment list, which only
+                    # offers apps currently making sound.
                     new_procs = _running_process_names()
                     procs_changed = new_procs != self._cached_procs
                     self._cached_procs = new_procs
@@ -213,25 +192,12 @@ class AppDetector:
                     if apps_changed:
                         self._cached_apps = apps
 
-                    # Stream count changes when a NEW stream appears even under
-                    # an app already in the list (e.g. the next YouTube video in
-                    # the same browser). The app-name list wouldn't change in
-                    # that case, so we watch the count to still trigger a volume
-                    # re-apply for the new stream.
-                    try:
-                        new_count = self.audio.get_stream_count()
-                    except Exception:
-                        new_count = self._cached_stream_count
-                    count_changed = new_count != self._cached_stream_count
-                    self._cached_stream_count = new_count
-
                     # Rebuild the dropdowns when the audio-app list changes (an
                     # app started/stopped making sound). Otherwise, if only the
-                    # process set or the stream count changed, fire the lighter
-                    # state callback (re-evaluate states + re-apply volume).
+                    # process set changed, just re-evaluate the status dots.
                     if apps_changed and self.callback:
                         self.callback(self.get_dropdown_values())
-                    elif (procs_changed or count_changed) and self.state_callback:
+                    elif procs_changed and self.state_callback:
                         self.state_callback()
                 except Exception as e:
                     logger.error(f"AppDetector: {e}")
