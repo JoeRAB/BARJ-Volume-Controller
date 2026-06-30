@@ -5,6 +5,7 @@ BARJ Volume Controller main window
 import tkinter as tk
 from tkinter import ttk
 import logging
+import threading
 from pathlib import Path
 from typing import List, Optional
 
@@ -82,8 +83,15 @@ class MainWindow(tk.Tk):
         self._loading_profile = False
         self._pending_values = None    # latest serial values (set by serial thread)
         self._last_applied: list = []  # last AUDIO level actually pushed per slider
-        self._apply_counter  = 0       # drives the periodic new-stream sweep
+        self._apply_counter  = 0       # drives the periodic new-stream sweep (fallback)
+        self._known_ids: set = set()   # stream ids seen last tick (fast new-stream detection)
         self._tick_job: Optional[str] = None
+        # Routing snapshot read by the new-stream listener THREAD to decide what
+        # level a brand-new stream should get. Replaced wholesale each tick
+        # (never mutated in place), so the listener can read it under the lock
+        # and then use it without holding the lock.
+        self._routing = {"apps": {}, "all_others_level": None, "exclude": set()}
+        self._routing_lock = threading.Lock()
         self._was_connected   = False
         self._reconnect_job: Optional[str] = None
 
@@ -113,6 +121,15 @@ class MainWindow(tk.Tk):
         # promptly. Cost is kept low by only touching the audio backend when a
         # value changed or on a periodic new-stream sweep (see _apply_values).
         self._apply_tick()
+        # Apply the right level to brand-new streams the instant they appear
+        # (no audible blip on an unpaused/started video). This is a pure
+        # enhancement over the per-tick check above: if it can't run, new
+        # streams are still caught within a frame.
+        if self.audio:
+            try:
+                self.audio.start_new_stream_listener(self._route_level)
+            except Exception as e:
+                logger.debug(f"start_new_stream_listener: {e}")
 
         # Tray
         self._tray = TrayIcon(on_show_hide=self._toggle_window,
@@ -701,34 +718,47 @@ class MainWindow(tk.Tk):
         self._assignments_cache = None
         self._last_applied = []
 
-    # How often the periodic "catch new streams" sweep runs, in ticks. At ~30
-    # fps a value of 5 means ~6 sweeps/sec (~165 ms), so a brand-new stream is
-    # picked up within that window while idle audio-backend traffic stays low.
+    # Fallback only: how often to force a re-apply ("sweep") to catch new
+    # streams when the backend can't enumerate stream ids (current_input_ids
+    # returns None). When it CAN (e.g. Linux), a new stream is caught the very
+    # next tick instead, so an unpaused video doesn't blast at full volume.
     SWEEP_EVERY = 5
 
     def _apply_values(self, values):
         assignments, exclude = self._get_cached_assignments()
+        # Keep the routing snapshot (used by the new-stream listener thread)
+        # current with the latest values and assignments.
+        self._update_routing(values, assignments, exclude)
         # Pad trackers to length
         while len(self._last_ui_values) < len(values):
             self._last_ui_values.append(-1.0)
         while len(self._last_applied) < len(values):
             self._last_applied.append(-1.0)
 
-        self._apply_counter = (self._apply_counter + 1) % 1_000_000
-        sweep = (self._apply_counter % self.SWEEP_EVERY == 0)
+        # Decide whether to force a re-apply this tick so a NEW audio stream is
+        # brought to level at once. Preferred path: ask the backend for the
+        # current stream ids (one cheap call) and force if any id is new. If the
+        # backend can't do that (returns None), fall back to a periodic sweep.
+        audio = self.audio
+        force = False
+        ids = audio.current_input_ids() if audio else None
+        if ids is not None:
+            force = bool(ids - self._known_ids)   # a stream appeared since last tick
+            self._known_ids = ids
+        else:
+            self._apply_counter = (self._apply_counter + 1) % 1_000_000
+            force = (self._apply_counter % self.SWEEP_EVERY == 0)
 
         for i, panel in enumerate(self._slider_panels):
             if i >= len(values): break
 
-            # AUDIO: only touch the backend when our value actually changed, or
-            # on the periodic sweep. The backend writes each stream on-change,
-            # so a sweep with an unchanged value only affects NEW streams and
-            # leaves user-adjusted streams (e.g. a website's own slider) alone.
-            # That is what stops the hardware from constantly overwriting an
-            # in-app volume change, while still bringing new streams to level.
+            # AUDIO: touch the backend when our value changed or a new stream
+            # just appeared. The backend writes each stream on-change, so a
+            # forced re-apply with an unchanged value only affects the new
+            # stream and leaves user-adjusted streams (a website's own slider)
+            # alone.
             changed = abs(values[i] - self._last_applied[i]) >= 0.0015
-            audio = self.audio
-            if audio and i < len(assignments) and (changed or sweep):
+            if audio and i < len(assignments) and (changed or force):
                 try:
                     audio.apply_slider(
                         assignments[i].get("target", ""), values[i],
@@ -744,6 +774,53 @@ class MainWindow(tk.Tk):
             self._last_ui_values[i] = values[i]
             try:   panel.set_value(values[i])
             except Exception as e: logger.debug(f"set_value {i}: {e}")
+
+    def _update_routing(self, values, assignments, exclude):
+        """Rebuild the app->level snapshot the new-stream listener reads. Mirrors
+        how apply_slider routes targets: explicit apps (single or multi) map to
+        their slider's level; an 'all_others' slider sets a fallback level for
+        any stream not claimed by an explicit target. 'master' isn't included -
+        it's the sink volume, not a per-stream target."""
+        apps = {}
+        all_others = None
+        for i, a in enumerate(assignments):
+            if i >= len(values):
+                break
+            target = a.get("target", "")
+            lvl = values[i]
+            if isinstance(target, str):
+                t = target.strip().lower()
+                if t == "all_others":
+                    all_others = lvl
+                elif t in ("", "none", "master"):
+                    pass
+                else:
+                    apps[t] = lvl
+            else:
+                for app in target:
+                    if app and app.strip():
+                        apps[app.strip().lower()] = lvl
+        snapshot = {"apps": apps, "all_others_level": all_others,
+                    "exclude": {e.strip().lower() for e in exclude if e and e.strip()}}
+        with self._routing_lock:
+            self._routing = snapshot
+
+    def _route_level(self, binary, app_name):
+        """Called from the new-stream listener THREAD. Given a new stream's
+        process binary / application name, return the level it should get, or
+        None if no slider controls it. Matches the same way set_app_volume /
+        set_all_others_volume do (case-insensitive substring)."""
+        with self._routing_lock:
+            r = self._routing   # snapshot is never mutated in place, safe to use after
+        binl = (binary or "").lower()
+        appl = (app_name or "").lower()
+        for name, level in r["apps"].items():
+            if name and (name in binl or name in appl):
+                return level
+        if r["all_others_level"] is not None:
+            if not any(e and (e in binl or e in appl) for e in r["exclude"]):
+                return r["all_others_level"]
+        return None
 
     def _on_slider_changed(self, panel):
         if getattr(self, "_loading_profile", False):
@@ -948,6 +1025,9 @@ class MainWindow(tk.Tk):
             try: self.after_cancel(self._tick_job)
             except Exception: pass
             self._tick_job = None
+        if self.audio:
+            try: self.audio.stop_new_stream_listener()
+            except Exception: pass
         if self.serial_reader: self.serial_reader.stop()
         if self.detector:      self.detector.stop()
         self._tray.stop()

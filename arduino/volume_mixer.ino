@@ -62,6 +62,17 @@ const int           DEADBAND     = 2;     // ignore jitter below ~0.2%
 const unsigned long HEARTBEAT_MS = 500;   // max silence between sends (ms)
 const int           LOOP_DELAY   = 10;    // ms between read cycles
 
+// --- Status LED ---
+// true  = the board's built-in LED (LED_BUILTIN, usually pin 13) blinks on
+//         every send: it flickers while you move a slider and pulses about
+//         once a second from the idle heartbeat, so you can see the controller
+//         is alive and transmitting.
+// false = the built-in LED is left off and never touched.
+// NOTE: this only controls the built-in LED. The separate TX/RX traffic LEDs
+// are driven by the USB hardware on Uno/Nano-style boards and cannot be turned
+// off from the sketch.
+const bool ENABLE_LED = true;
+
 // ===========================================================================
 //  Implementation  —  no need to edit below here
 // ===========================================================================
@@ -69,11 +80,16 @@ const int           LOOP_DELAY   = 10;    // ms between read cycles
 int analogSliderValues[NUM_SLIDERS];
 int lastSentValues[NUM_SLIDERS];
 unsigned long lastSendTime = 0;
+bool ledState = false;             // current built-in LED state (toggled on send)
 
 void setup() {
   for (int i = 0; i < NUM_SLIDERS; i++) {
     pinMode(SLIDER_PINS[i], INPUT);
     lastSentValues[i] = -1000;   // force a send on first loop
+  }
+  if (ENABLE_LED) {
+    pinMode(LED_BUILTIN, OUTPUT);
+    digitalWrite(LED_BUILTIN, LOW);
   }
   Serial.begin(9600);
 }
@@ -96,6 +112,10 @@ void loop() {
       lastSentValues[i] = analogSliderValues[i];
     }
     lastSendTime = now;
+    if (ENABLE_LED) {
+      ledState = !ledState;                  // blink to show activity
+      digitalWrite(LED_BUILTIN, ledState);
+    }
   }
 
   delay(LOOP_DELAY);

@@ -103,6 +103,29 @@ class AudioController(ABC):
         for app in targets:
             self.set_app_volume(app, level)
 
+    def current_input_ids(self):
+        """Return a set of identifiers for the audio streams currently playing,
+        used by the GUI to spot a brand-new stream (e.g. an unpaused video) and
+        bring it to its slider's level immediately rather than on the slower
+        periodic sweep.
+
+        Return None if the backend can't enumerate streams cheaply; callers then
+        fall back to the periodic sweep. The default is None (unsupported)."""
+        return None
+
+    def start_new_stream_listener(self, route_fn):
+        """Optionally start applying levels to newly-created streams the instant
+        they appear (so a new stream never plays a frame at full volume).
+
+        `route_fn(binary, app_name) -> Optional[float]` returns the level a new
+        stream should get, or None if no slider controls it. Default: no-op -
+        backends without this just rely on the GUI's per-tick new-stream check."""
+        pass
+
+    def stop_new_stream_listener(self):
+        """Stop the new-stream listener if one is running. Default: no-op."""
+        pass
+
 
 def get_audio_controller() -> AudioController:
     system = platform.system()

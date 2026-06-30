@@ -30,6 +30,96 @@ def _clamp(val: float) -> float:
     return max(0.0, min(1.0, val))
 
 
+class _NewStreamListener:
+    """Background thread that watches PulseAudio for newly-created sink inputs
+    and sets the right slider level on each one the moment it appears - before
+    it produces audible output - so an unpaused/started stream never plays even
+    a single frame at full volume.
+
+    It uses its OWN Pulse connection, because the main backend connection is
+    busy serving the GUI thread and pulsectl's event loop monopolises whatever
+    connection it listens on. `route_fn(binary, app_name) -> Optional[float]`
+    returns the level to apply, or None if no slider controls that stream.
+
+    All failures are non-fatal: if the listener can't start or dies, the GUI's
+    per-tick new-stream check still brings new streams to level within a frame,
+    so behaviour degrades to "fast" rather than breaking.
+    """
+
+    RETRY_DELAY = 3.0      # seconds before retrying after a connection error
+    LISTEN_TIMEOUT = 1.0   # event_listen wakes this often to re-check _running
+
+    def __init__(self, route_fn):
+        self._route_fn = route_fn
+        self._running  = False
+        self._thread   = None
+        self._pulse    = None
+        self._pending  = []   # new sink-input indices, touched only by this thread
+
+    def start(self):
+        if not PULSECTL_AVAILABLE or self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True,
+                                        name="NewStreamListener")
+        self._thread.start()
+
+    def stop(self):
+        # The listen loop wakes every LISTEN_TIMEOUT seconds and checks this, so
+        # it exits within ~1s. The thread is a daemon, so process exit is clean
+        # regardless.
+        self._running = False
+
+    def _on_event(self, ev):
+        # Runs INSIDE event_listen, where we must not call back into pulse on
+        # this connection. Just record the new sink-input index and break out of
+        # the listen loop so the surrounding code can act on it.
+        try:
+            if ev.facility == "sink_input" and ev.t == "new":
+                self._pending.append(ev.index)
+        except Exception:
+            pass
+        raise pulsectl.PulseLoopStop
+
+    def _loop(self):
+        while self._running:
+            try:
+                self._pulse = pulsectl.Pulse("barj-newstream")
+                self._pulse.event_mask_set("sink_input")
+                self._pulse.event_callback_set(self._on_event)
+                while self._running:
+                    # Returns when a new stream fires (the callback raises
+                    # PulseLoopStop) or after the timeout.
+                    self._pulse.event_listen(timeout=self.LISTEN_TIMEOUT)
+                    while self._pending:
+                        self._apply_to(self._pending.pop(0))
+            except Exception as e:
+                logger.debug(f"new-stream listener: {e}")
+                if self._running:
+                    time.sleep(self.RETRY_DELAY)
+            finally:
+                try:
+                    if self._pulse:
+                        self._pulse.close()
+                except Exception:
+                    pass
+                self._pulse = None
+
+    def _apply_to(self, index):
+        try:
+            for inp in self._pulse.sink_input_list():
+                if inp.index != index:
+                    continue
+                binary   = inp.proplist.get("application.process.binary", "")
+                app_name = inp.proplist.get("application.name", "")
+                level = self._route_fn(binary, app_name)
+                if level is not None:
+                    self._pulse.volume_set_all_chans(inp, _clamp(level))
+                break
+        except Exception as e:
+            logger.debug(f"new-stream apply: {e}")
+
+
 class LinuxAudioController(AudioController):
 
     RECONNECT_DELAY = 3.0    # seconds between pulse reconnect attempts
@@ -56,6 +146,7 @@ class LinuxAudioController(AudioController):
         # is new.
         self._applied_levels: dict = {}    # sink-input index -> last level we set
         self._applied_master: Optional[float] = None
+        self._listener = None              # _NewStreamListener, started on demand
         self._connect()
 
     # Connection management                                                #
@@ -222,6 +313,26 @@ class LinuxAudioController(AudioController):
                 self._write_input(pulse, inp, level)
             self._prune_applied(present)
         self._safe(_do)
+
+    def current_input_ids(self):
+        """Set of current sink-input indices, for spotting new streams quickly.
+        Always returns a set on Linux (empty if none / temporarily
+        disconnected), so the GUI uses fast per-tick new-stream detection."""
+        def _do(pulse):
+            return {inp.index for inp in pulse.sink_input_list()}
+        r = self._safe(_do)
+        return r if r is not None else set()
+
+    def start_new_stream_listener(self, route_fn):
+        if self._listener:
+            return
+        self._listener = _NewStreamListener(route_fn)
+        self._listener.start()
+
+    def stop_new_stream_listener(self):
+        if self._listener:
+            self._listener.stop()
+            self._listener = None
 
     def get_running_audio_apps(self) -> List[str]:
         def _do(pulse):
