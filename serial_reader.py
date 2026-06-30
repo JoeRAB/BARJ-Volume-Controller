@@ -91,14 +91,16 @@ class SerialReader:
         return d
 
     def set_muted(self, index: int, muted: bool):
-        """Update one slider's mute state live (no reader restart needed). The
-        next frame applies it via _slider_setting()."""
+        """Update one slider's mute state live (no reader restart needed) and
+        apply it immediately, so mute/unmute doesn't wait for the next serial
+        frame (up to ~500 ms when the sliders are idle)."""
         with self._lock:
             while len(self.slider_settings) <= index:
                 self.slider_settings.append({})
             if self.slider_settings[index] is None:
                 self.slider_settings[index] = {}
             self.slider_settings[index]["muted"] = bool(muted)
+        self._emit_now()
 
     def start(self):
         if not SERIAL_AVAILABLE:
@@ -298,8 +300,20 @@ class SerialReader:
         # Final per-slider mapping: calibration range → 0-1, per-slider invert,
         # then mute (forces 0). Calibration lets a pot that only travels e.g.
         # 15–1008 still reach a clean 0% and 100%.
-        normalised = []
-        for i in range(num):
+        normalised = self._map_normalised(snap, settings)
+
+        if self.callback:
+            try:
+                self.callback(normalised)
+            except Exception as e:
+                logger.error(f"Slider callback error: {e}")
+
+    @staticmethod
+    def _map_normalised(snap, settings):
+        """Map smoothed raw levels + per-slider settings to final 0-1 values:
+        calibration range -> 0-1, per-slider invert, then mute (forces 0)."""
+        out = []
+        for i in range(len(snap)):
             s = settings[i]
             lo, hi = s["cal_min"], s["cal_max"]
             if hi <= lo:                      # guard against bad calibration
@@ -310,8 +324,20 @@ class SerialReader:
                 v = 1.0 - v
             if s["muted"]:
                 v = 0.0
-            normalised.append(round(v, 4))
+            out.append(round(v, 4))
+        return out
 
+    def _emit_now(self):
+        """Recompute and emit values immediately from the current smoothed
+        levels, without waiting for the next serial frame. Used when a setting
+        that affects output (e.g. mute) changes from the GUI, so the change is
+        applied at once instead of lagging up to one idle heartbeat (~500 ms)."""
+        with self._lock:
+            if not self._smoothed:
+                return
+            snap = list(self._smoothed)
+            settings = [self._slider_setting(i) for i in range(self.num_sliders)]
+        normalised = self._map_normalised(snap, settings)
         if self.callback:
             try:
                 self.callback(normalised)

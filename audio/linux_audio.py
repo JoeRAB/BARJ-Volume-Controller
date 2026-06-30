@@ -47,6 +47,15 @@ class LinuxAudioController(AudioController):
         # quickly new streams are picked up.)
         self._sink_name_cache: Optional[str] = None
         self._sink_cache_time: float = 0.0
+        # Write-on-change bookkeeping. We remember the last level we *wrote* to
+        # each stream (by sink-input index) and to the default sink. On a
+        # re-apply we skip any stream already at that level, so (a) re-applying
+        # every frame is cheap, and (b) we don't clobber a volume the user
+        # changed elsewhere (e.g. a website's own slider). A stream's level is
+        # only re-written when our slider value actually changes or the stream
+        # is new.
+        self._applied_levels: dict = {}    # sink-input index -> last level we set
+        self._applied_master: Optional[float] = None
         self._connect()
 
     # Connection management                                                #
@@ -58,6 +67,11 @@ class LinuxAudioController(AudioController):
         except Exception as e:
             logger.error(f"Could not connect to PulseAudio/PipeWire: {e}")
             self._pulse = None
+        # Forget what we think we've written: after a (re)connect the stream
+        # indices and volumes may be different, so the next apply must go
+        # through rather than be skipped by write-on-change.
+        self._applied_levels = {}
+        self._applied_master = None
 
     def _safe(self, fn):
         """
@@ -136,12 +150,37 @@ class LinuxAudioController(AudioController):
 
     # Volume control                                                       #
 
+    EPS = 0.004   # ignore sub-0.4% changes (below the firmware deadband)
+
+    def _write_input(self, pulse, inp, level: float) -> bool:
+        """Set one sink input's volume only if we haven't already set it to
+        this level. Returns True if a write happened. This is what lets a
+        website's own volume slider stick: if our slider hasn't moved, we don't
+        re-write the stream, so we don't undo the user's change."""
+        prev = self._applied_levels.get(inp.index)
+        if prev is not None and abs(prev - level) < self.EPS:
+            return False
+        pulse.volume_set_all_chans(inp, level)
+        self._applied_levels[inp.index] = level
+        return True
+
+    def _prune_applied(self, present_ids):
+        """Drop bookkeeping for streams that have gone away, so the dict can't
+        grow without bound and a reused index can't be mistaken for already-set."""
+        if len(self._applied_levels) > len(present_ids):
+            for idx in [i for i in self._applied_levels if i not in present_ids]:
+                del self._applied_levels[idx]
+
     def set_master_volume(self, level: float):
         level = _clamp(level)
         def _do(pulse):
+            if (self._applied_master is not None
+                    and abs(self._applied_master - level) < self.EPS):
+                return
             sink = self._default_sink(pulse)
             if sink:
                 pulse.volume_set_all_chans(sink, level)
+                self._applied_master = level
         self._safe(_do)
 
     def get_master_volume(self) -> float:
@@ -155,10 +194,13 @@ class LinuxAudioController(AudioController):
         target = process_name.lower()
         def _do(pulse):
             matched = False
+            present = set()
             for inp in pulse.sink_input_list():
+                present.add(inp.index)
                 if self._input_matches(inp, target):
-                    pulse.volume_set_all_chans(inp, level)
+                    self._write_input(pulse, inp, level)
                     matched = True
+            self._prune_applied(present)
             if not matched:
                 logger.debug(f"No audio session for '{process_name}'")
         self._safe(_do)
@@ -172,10 +214,13 @@ class LinuxAudioController(AudioController):
         excl = {e.strip().lower() for e in exclude if e and e.strip()}
 
         def _do(pulse):
+            present = set()
             for inp in pulse.sink_input_list():
+                present.add(inp.index)
                 if any(self._input_matches(inp, t) for t in excl):
                     continue   # owned by another slider
-                pulse.volume_set_all_chans(inp, level)
+                self._write_input(pulse, inp, level)
+            self._prune_applied(present)
         self._safe(_do)
 
     def get_running_audio_apps(self) -> List[str]:

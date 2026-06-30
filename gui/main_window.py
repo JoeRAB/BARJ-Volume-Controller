@@ -80,8 +80,10 @@ class MainWindow(tk.Tk):
         self._assignments_cache = None
         self._last_ui_values: list = []
         self._loading_profile = False
-        self._pending_values = None    # latest serial values awaiting GUI apply
-        self._apply_pending  = False   # True while a drain is scheduled
+        self._pending_values = None    # latest serial values (set by serial thread)
+        self._last_applied: list = []  # last AUDIO level actually pushed per slider
+        self._apply_counter  = 0       # drives the periodic new-stream sweep
+        self._tick_job: Optional[str] = None
         self._was_connected   = False
         self._reconnect_job: Optional[str] = None
 
@@ -103,6 +105,14 @@ class MainWindow(tk.Tk):
         if self.detector:
             self.detector.start()
         self._schedule_conn_check()
+        # Steady ~30 fps apply loop, INDEPENDENT of serial arrival. The Arduino
+        # only sends when a slider moves (plus a 500 ms idle heartbeat), so an
+        # apply driven by serial frames lagged new audio streams and mutes by
+        # up to half a second. This loop applies the latest values on a fixed
+        # cadence instead, so a new stream (e.g. the next video) is caught
+        # promptly. Cost is kept low by only touching the audio backend when a
+        # value changed or on a periodic new-stream sweep (see _apply_values).
+        self._apply_tick()
 
         # Tray
         self._tray = TrayIcon(on_show_hide=self._toggle_window,
@@ -654,28 +664,25 @@ class MainWindow(tk.Tk):
         self.serial_reader.start()
 
     def _on_serial_values(self, values):
-        # Called from the serial thread ~100×/sec. Coalesce: keep only the
-        # latest values and schedule at most ONE pending GUI apply, instead
-        # of queueing a tkinter event per serial line. Latest-wins also
-        # prevents a backlog of stale values being replayed if the GUI
-        # stalls briefly (e.g. during a theme rebuild).
+        # Called from the serial thread. Just record the latest values
+        # (latest-wins); the steady _apply_tick loop consumes them on the GUI
+        # thread. Doing no scheduling here means the apply cadence no longer
+        # depends on how often the Arduino sends.
         self._pending_values = values
-        if not self._apply_pending:
-            self._apply_pending = True
-            try:
-                self.after(33, self._drain_serial_values)   # ~30 fps
-            except Exception:
-                self._apply_pending = False
 
-    def _drain_serial_values(self):
-        self._apply_pending = False
-        v = self._pending_values
-        if v is not None:
-            self._apply_values(v)
+    def _apply_tick(self):
+        """Fixed-cadence apply loop (~30 fps), running for the app's lifetime
+        and independent of serial arrival. Reschedules itself."""
+        try:
+            v = self._pending_values
+            if v is not None:
+                self._apply_values(v)
+        finally:
+            self._tick_job = self.after(33, self._apply_tick)
 
     def _get_cached_assignments(self):
         """Profile assignments, cached - rebuilt only when the profile or
-        settings change, not 100×/sec on every serial tick."""
+        settings change, not on every tick."""
         if self._assignments_cache is None:
             assignments = self.config_mgr.get_profile_assignments()
             # Exclude set for 'all_others': every explicit app target assigned
@@ -688,35 +695,50 @@ class MainWindow(tk.Tk):
         return self._assignments_cache
 
     def _invalidate_assignments(self):
-        """Drop the cached profile mapping so the next frame recomputes targets
-        and the all_others exclude set. Cheap - just clears the cache; the
-        per-frame apply rebuilds it on demand. Called when the profile changes
-        or a slider is reassigned."""
+        """Drop the cached profile mapping so the next tick recomputes targets
+        and the all_others exclude set, and force every slider to re-apply once
+        (clear _last_applied) so a reassigned target takes effect immediately."""
         self._assignments_cache = None
+        self._last_applied = []
+
+    # How often the periodic "catch new streams" sweep runs, in ticks. At ~30
+    # fps a value of 5 means ~6 sweeps/sec (~165 ms), so a brand-new stream is
+    # picked up within that window while idle audio-backend traffic stays low.
+    SWEEP_EVERY = 5
 
     def _apply_values(self, values):
         assignments, exclude = self._get_cached_assignments()
-        # Pad UI-change tracker to length
+        # Pad trackers to length
         while len(self._last_ui_values) < len(values):
             self._last_ui_values.append(-1.0)
+        while len(self._last_applied) < len(values):
+            self._last_applied.append(-1.0)
+
+        self._apply_counter = (self._apply_counter + 1) % 1_000_000
+        sweep = (self._apply_counter % self.SWEEP_EVERY == 0)
 
         for i, panel in enumerate(self._slider_panels):
             if i >= len(values): break
-            # Always re-apply the audio level every frame. This is how the app
-            # originally worked and it means a NEW audio stream (e.g. the next
-            # video) is brought to the slider's level within one frame, with no
-            # event listener or stream polling needed. The audio backend is
-            # cheap to call repeatedly.
+
+            # AUDIO: only touch the backend when our value actually changed, or
+            # on the periodic sweep. The backend writes each stream on-change,
+            # so a sweep with an unchanged value only affects NEW streams and
+            # leaves user-adjusted streams (e.g. a website's own slider) alone.
+            # That is what stops the hardware from constantly overwriting an
+            # in-app volume change, while still bringing new streams to level.
+            changed = abs(values[i] - self._last_applied[i]) >= 0.0015
             audio = self.audio
-            if audio and i < len(assignments):
+            if audio and i < len(assignments) and (changed or sweep):
                 try:
-                    self.audio.apply_slider(
+                    audio.apply_slider(
                         assignments[i].get("target", ""), values[i],
                         exclude=exclude)
-                except Exception as e: logger.debug(f"apply_slider: {e}")
-            # Only redraw the meter when the value visibly moved - redrawing the
-            # canvas at idle is wasted work and (unlike the audio call) has no
-            # bearing on new-stream behaviour.
+                    if changed:
+                        self._last_applied[i] = values[i]
+                except Exception as e:
+                    logger.debug(f"apply_slider: {e}")
+
+            # METER: redraw only when the value visibly moved.
             if abs(values[i] - self._last_ui_values[i]) < 0.002:
                 continue
             self._last_ui_values[i] = values[i]
@@ -922,6 +944,10 @@ class MainWindow(tk.Tk):
         self.after(0, self._do_quit)
 
     def _do_quit(self):
+        if self._tick_job:
+            try: self.after_cancel(self._tick_job)
+            except Exception: pass
+            self._tick_job = None
         if self.serial_reader: self.serial_reader.stop()
         if self.detector:      self.detector.stop()
         self._tray.stop()
