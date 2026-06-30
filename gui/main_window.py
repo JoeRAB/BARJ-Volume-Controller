@@ -5,7 +5,6 @@ BARJ Volume Controller main window
 import tkinter as tk
 from tkinter import ttk
 import logging
-import threading
 from pathlib import Path
 from typing import List, Optional
 
@@ -86,12 +85,6 @@ class MainWindow(tk.Tk):
         self._apply_counter  = 0       # drives the periodic new-stream sweep (fallback)
         self._known_ids: set = set()   # stream ids seen last tick (fast new-stream detection)
         self._tick_job: Optional[str] = None
-        # Routing snapshot read by the new-stream listener THREAD to decide what
-        # level a brand-new stream should get. Replaced wholesale each tick
-        # (never mutated in place), so the listener can read it under the lock
-        # and then use it without holding the lock.
-        self._routing = {"apps": {}, "all_others_level": None, "exclude": set()}
-        self._routing_lock = threading.Lock()
         self._was_connected   = False
         self._reconnect_job: Optional[str] = None
 
@@ -121,15 +114,6 @@ class MainWindow(tk.Tk):
         # promptly. Cost is kept low by only touching the audio backend when a
         # value changed or on a periodic new-stream sweep (see _apply_values).
         self._apply_tick()
-        # Apply the right level to brand-new streams the instant they appear
-        # (no audible blip on an unpaused/started video). This is a pure
-        # enhancement over the per-tick check above: if it can't run, new
-        # streams are still caught within a frame.
-        if self.audio:
-            try:
-                self.audio.start_new_stream_listener(self._route_level)
-            except Exception as e:
-                logger.debug(f"start_new_stream_listener: {e}")
 
         # Tray
         self._tray = TrayIcon(on_show_hide=self._toggle_window,
@@ -726,9 +710,6 @@ class MainWindow(tk.Tk):
 
     def _apply_values(self, values):
         assignments, exclude = self._get_cached_assignments()
-        # Keep the routing snapshot (used by the new-stream listener thread)
-        # current with the latest values and assignments.
-        self._update_routing(values, assignments, exclude)
         # Pad trackers to length
         while len(self._last_ui_values) < len(values):
             self._last_ui_values.append(-1.0)
@@ -774,53 +755,6 @@ class MainWindow(tk.Tk):
             self._last_ui_values[i] = values[i]
             try:   panel.set_value(values[i])
             except Exception as e: logger.debug(f"set_value {i}: {e}")
-
-    def _update_routing(self, values, assignments, exclude):
-        """Rebuild the app->level snapshot the new-stream listener reads. Mirrors
-        how apply_slider routes targets: explicit apps (single or multi) map to
-        their slider's level; an 'all_others' slider sets a fallback level for
-        any stream not claimed by an explicit target. 'master' isn't included -
-        it's the sink volume, not a per-stream target."""
-        apps = {}
-        all_others = None
-        for i, a in enumerate(assignments):
-            if i >= len(values):
-                break
-            target = a.get("target", "")
-            lvl = values[i]
-            if isinstance(target, str):
-                t = target.strip().lower()
-                if t == "all_others":
-                    all_others = lvl
-                elif t in ("", "none", "master"):
-                    pass
-                else:
-                    apps[t] = lvl
-            else:
-                for app in target:
-                    if app and app.strip():
-                        apps[app.strip().lower()] = lvl
-        snapshot = {"apps": apps, "all_others_level": all_others,
-                    "exclude": {e.strip().lower() for e in exclude if e and e.strip()}}
-        with self._routing_lock:
-            self._routing = snapshot
-
-    def _route_level(self, binary, app_name):
-        """Called from the new-stream listener THREAD. Given a new stream's
-        process binary / application name, return the level it should get, or
-        None if no slider controls it. Matches the same way set_app_volume /
-        set_all_others_volume do (case-insensitive substring)."""
-        with self._routing_lock:
-            r = self._routing   # snapshot is never mutated in place, safe to use after
-        binl = (binary or "").lower()
-        appl = (app_name or "").lower()
-        for name, level in r["apps"].items():
-            if name and (name in binl or name in appl):
-                return level
-        if r["all_others_level"] is not None:
-            if not any(e and (e in binl or e in appl) for e in r["exclude"]):
-                return r["all_others_level"]
-        return None
 
     def _on_slider_changed(self, panel):
         if getattr(self, "_loading_profile", False):
@@ -1025,9 +959,6 @@ class MainWindow(tk.Tk):
             try: self.after_cancel(self._tick_job)
             except Exception: pass
             self._tick_job = None
-        if self.audio:
-            try: self.audio.stop_new_stream_listener()
-            except Exception: pass
         if self.serial_reader: self.serial_reader.stop()
         if self.detector:      self.detector.stop()
         self._tray.stop()
