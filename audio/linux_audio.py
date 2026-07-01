@@ -152,15 +152,34 @@ class LinuxAudioController(AudioController):
 
     EPS = 0.004   # ignore sub-0.4% changes (below the firmware deadband)
 
-    def _write_input(self, pulse, inp, level: float, force: bool = False) -> bool:
-        """Set one sink input's volume only if we haven't already set it to
-        this level. Returns True if a write happened. This is what lets a
-        website's own volume slider stick: if our slider hasn't moved, we don't
-        re-write the stream, so we don't undo the user's change.
+    def _write_input(self, pulse, inp, level: float,
+                     force: bool = False, ramp=None) -> bool:
+        """Set one sink input's volume.
 
-        force=True (authoritative slider) skips that check and writes every time,
-        so an external change to the stream volume is overridden on the next
-        tick instead of being allowed to stick."""
+        Normally we only write if we haven't already set this stream to this
+        level (write-on-change) - that's what lets a website's own volume slider
+        stick: if our slider hasn't moved we don't re-write, so we don't undo the
+        user's change. force=True (authoritative) skips that check so an external
+        change is overridden.
+
+        ramp (a max step, authoritative corrections only) eases the change in: we
+        read the stream's actual current volume and move it toward `level` by at
+        most `ramp`, so an external drift (a browser slider drag, YouTube's
+        auto-normalisation) glides back to the knob instead of snapping - no
+        spike. When already at target we write nothing."""
+        if ramp is not None:
+            try:
+                actual = inp.volume.value_flat
+            except Exception:
+                actual = self._applied_levels.get(inp.index, level)
+            diff = level - actual
+            if abs(diff) < self.EPS:
+                return False                    # already there - nothing to correct
+            new = level if abs(diff) <= ramp else actual + (ramp if diff > 0 else -ramp)
+            pulse.volume_set_all_chans(inp, new)
+            self._applied_levels[inp.index] = new
+            return True
+
         if not force:
             prev = self._applied_levels.get(inp.index)
             if prev is not None and abs(prev - level) < self.EPS:
@@ -176,7 +195,10 @@ class LinuxAudioController(AudioController):
             for idx in [i for i in self._applied_levels if i not in present_ids]:
                 del self._applied_levels[idx]
 
-    def set_master_volume(self, level: float, force: bool = False):
+    def set_master_volume(self, level: float, force: bool = False, ramp=None):
+        # `ramp` is accepted for interface parity but not applied to the master
+        # sink - the glide targets per-app streams (the browser spike). Master
+        # applies instantly.
         level = _clamp(level)
         def _do(pulse):
             if (not force and self._applied_master is not None
@@ -194,7 +216,8 @@ class LinuxAudioController(AudioController):
             return sink.volume.value_flat if sink else 0.0
         return self._safe(_do) or 0.0
 
-    def set_app_volume(self, process_name: str, level: float, force: bool = False):
+    def set_app_volume(self, process_name: str, level: float,
+                       force: bool = False, ramp=None):
         level = _clamp(level)
         target = process_name.lower()
         def _do(pulse):
@@ -203,14 +226,15 @@ class LinuxAudioController(AudioController):
             for inp in pulse.sink_input_list():
                 present.add(inp.index)
                 if self._input_matches(inp, target):
-                    self._write_input(pulse, inp, level, force=force)
+                    self._write_input(pulse, inp, level, force=force, ramp=ramp)
                     matched = True
             self._prune_applied(present)
             if not matched:
                 logger.debug(f"No audio session for '{process_name}'")
         self._safe(_do)
 
-    def set_all_others_volume(self, level: float, exclude, force: bool = False):
+    def set_all_others_volume(self, level: float, exclude,
+                              force: bool = False, ramp=None):
         """
         Set volume on every sink input NOT matching any excluded target.
         Matching mirrors set_app_volume (see _input_matches).
@@ -224,7 +248,7 @@ class LinuxAudioController(AudioController):
                 present.add(inp.index)
                 if any(self._input_matches(inp, t) for t in excl):
                     continue   # owned by another slider
-                self._write_input(pulse, inp, level, force=force)
+                self._write_input(pulse, inp, level, force=force, ramp=ramp)
             self._prune_applied(present)
         self._safe(_do)
 

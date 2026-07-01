@@ -1187,6 +1187,7 @@ class SliderSettingsDialog(_CenteredDialog, tk.Toplevel):
         self._muted_var  = tk.BooleanVar(value=bool(s["muted"]))
         self._invert_var = tk.BooleanVar(value=bool(s["invert"]))
         self._auth_var   = tk.BooleanVar(value=bool(s.get("authoritative", False)))
+        self._glide_var  = tk.IntVar(value=int(s.get("glide_ms", 300)))
         self._cal_min    = int(s["cal_min"])
         self._cal_max    = int(s["cal_max"])
         self._smoothing  = s["smoothing"]   # None = use global, else a float
@@ -1235,6 +1236,32 @@ class SliderSettingsDialog(_CenteredDialog, tk.Toplevel):
                          "and causes the volume to jump. Leave it off for games and "
                          "Chrome - their in-app slider already stacks with the knob, "
                          "and turning this on stops that in-app slider from working.")
+
+        # Takeover glide (only relevant when "Take control" is on). How gently
+        # the knob re-takes control after something else moved the volume - a
+        # higher value fades the correction in instead of snapping, so dragging
+        # the app's own slider doesn't spike. Knob moves stay instant regardless.
+        gl = tk.Frame(outer, bg=T.bg_surface)
+        gl.pack(anchor="w", fill="x")
+        tk.Label(gl, text="Takeover glide", font=F.body, bg=T.bg_surface,
+                 fg=T.fg).pack(side="left")
+        self._glide_lbl = tk.Label(
+            gl, text=self._glide_text(self._glide_var.get()),
+            font=F.small_b, bg=T.bg_surface, fg=T.accent_soft, width=8)
+        self._glide_lbl.pack(side="right")
+        tk.Scale(outer, from_=0, to=600, resolution=50, orient="horizontal",
+                 variable=self._glide_var, length=300,
+                 bg=T.bg_surface, fg=T.fg, troughcolor=T.meter_track,
+                 highlightthickness=0, showvalue=False,
+                 command=lambda v: self._glide_lbl.config(
+                     text=self._glide_text(v))
+                 ).pack(anchor="w", fill="x")
+        gh = tk.Frame(outer, bg=T.bg_surface)
+        gh.pack(anchor="w", fill="x", pady=(0, 12))
+        tk.Label(gh, text="\u2190 instant", font=F.tiny,
+                 bg=T.bg_surface, fg=T.fg_muted).pack(side="left")
+        tk.Label(gh, text="smoother \u2192", font=F.tiny,
+                 bg=T.bg_surface, fg=T.fg_muted).pack(side="right")
 
         # Calibration
         tk.Frame(outer, bg=T.separator, height=1
@@ -1325,6 +1352,12 @@ class SliderSettingsDialog(_CenteredDialog, tk.Toplevel):
                 return label
         return "Use Global"   # unknown custom value falls back
 
+    @staticmethod
+    def _glide_text(ms):
+        """Label for the glide slider: 'instant' at 0, else seconds."""
+        ms = int(float(ms))
+        return "instant" if ms <= 0 else f"{ms / 1000:.2f} s"
+
     def _poll_raw(self):
         """Update the live raw-value label ~5×/sec while the dialog is open."""
         if self._get_raw:
@@ -1361,6 +1394,7 @@ class SliderSettingsDialog(_CenteredDialog, tk.Toplevel):
         self.config_mgr.set_slider_setting(i, "muted", bool(self._muted_var.get()))
         self.config_mgr.set_slider_setting(i, "invert", bool(self._invert_var.get()))
         self.config_mgr.set_slider_setting(i, "authoritative", bool(self._auth_var.get()))
+        self.config_mgr.set_slider_setting(i, "glide_ms", int(self._glide_var.get()))
         # Guard against inverted/empty calibration range
         lo, hi = self._cal_min, self._cal_max
         if hi <= lo:

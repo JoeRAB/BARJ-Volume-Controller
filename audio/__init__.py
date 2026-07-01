@@ -43,7 +43,7 @@ def _running_process_names() -> Set[str]:
 class AudioController(ABC):
 
     @abstractmethod
-    def set_master_volume(self, level: float, force: bool = False):
+    def set_master_volume(self, level: float, force: bool = False, ramp=None):
         """Set the default playback device volume. level is 0.0–1.0.
         force=True writes even if unchanged (used by authoritative sliders)."""
 
@@ -52,17 +52,23 @@ class AudioController(ABC):
         """Return current master volume as 0.0–1.0."""
 
     @abstractmethod
-    def set_app_volume(self, process_name: str, level: float, force: bool = False):
+    def set_app_volume(self, process_name: str, level: float,
+                       force: bool = False, ramp=None):
         """Set volume for all audio sessions belonging to process_name.
-        force=True writes even if unchanged (used by authoritative sliders)."""
+        force=True writes even if unchanged (used by authoritative sliders).
+        ramp, if given, is the max volume change per call: instead of jumping to
+        `level`, step the stream's current volume toward it by at most `ramp`, so
+        an authoritative correction glides in rather than spiking."""
 
     @abstractmethod
-    def set_all_others_volume(self, level: float, exclude: Set[str], force: bool = False):
+    def set_all_others_volume(self, level: float, exclude: Set[str],
+                              force: bool = False, ramp=None):
         """
         Set volume on every running audio app whose name does NOT match
         any entry in `exclude` (the targets assigned to other sliders).
         Matching must mirror set_app_volume's matching rules.
-        force=True writes even if unchanged (used by authoritative sliders).
+        force=True writes even if unchanged; ramp eases the change in (see
+        set_app_volume).
         """
 
     @abstractmethod
@@ -71,7 +77,7 @@ class AudioController(ABC):
 
     def apply_slider(self, target, level: float,
                      exclude: Optional[Set[str]] = None,
-                     force: bool = False):
+                     force: bool = False, ramp=None):
         """
         Route a slider value to its assigned target.
 
@@ -87,7 +93,9 @@ class AudioController(ABC):
 
         `force` (authoritative slider) makes the backend write the volume even
         if it matches what we last set, so external changes (e.g. Firefox tying
-        YouTube's slider to the stream volume) get overridden each tick.
+        YouTube's slider to the stream volume) get overridden each tick. `ramp`
+        eases those corrections in gradually instead of jumping (see
+        set_app_volume) so dragging a browser slider fades rather than spikes.
         """
         if not target:
             return
@@ -99,17 +107,18 @@ class AudioController(ABC):
             if t == "none":
                 return          # explicit "controls nothing" assignment
             if t == "master":
-                self.set_master_volume(level, force=force)
+                self.set_master_volume(level, force=force, ramp=ramp)
                 return
             if t == "all_others":
-                self.set_all_others_volume(level, exclude or set(), force=force)
+                self.set_all_others_volume(level, exclude or set(),
+                                           force=force, ramp=ramp)
                 return
             targets = [target]
         else:
             targets = [a for a in target if a and a.strip()]
 
         for app in targets:
-            self.set_app_volume(app, level, force=force)
+            self.set_app_volume(app, level, force=force, ramp=ramp)
 
     def current_input_ids(self):
         """Return a set of identifiers for the audio streams currently playing,

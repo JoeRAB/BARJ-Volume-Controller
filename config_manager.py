@@ -133,6 +133,11 @@ class ConfigManager:
         "authoritative": False,  # True → pot re-asserts this app's volume every
                                  # tick, overriding external changes (e.g. Firefox
                                  # /YouTube). Off = cooperative (in-app slider wins).
+        "glide_ms": 300,     # authoritative only: ms for a full-range correction to
+                             # glide back to the knob (0 = snap instantly). Knob
+                             # moves and new streams are always instant; only
+                             # external drift is eased in, so dragging a browser
+                             # slider fades instead of spiking.
     }
 
     def get_slider_settings(self, index: int) -> dict:

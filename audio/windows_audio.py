@@ -61,7 +61,7 @@ class WindowsAudioController(AudioController):
 
     # Master                                                               #
 
-    def set_master_volume(self, level: float, force: bool = False):
+    def set_master_volume(self, level: float, force: bool = False, ramp=None):
         level = _clamp(level)
         try:
             self._get_endpoint().SetMasterVolumeLevelScalar(level, None)
@@ -94,10 +94,11 @@ class WindowsAudioController(AudioController):
         except Exception:
             return ""
 
-    def set_app_volume(self, process_name: str, level: float, force: bool = False):
-        # `force` is accepted for interface parity; Windows writes the session
-        # volume on every call anyway (no write-on-change), so it already behaves
-        # as authoritative regardless of the flag.
+    def set_app_volume(self, process_name: str, level: float, force: bool = False, ramp=None):
+        # `force`/`ramp` are accepted for interface parity. Windows writes the
+        # session volume on every call (no write-on-change) so it's already
+        # authoritative; the glide (ramp) targets the Firefox/PulseAudio stream
+        # behaviour on Linux and isn't applied here.
         level = _clamp(level)
         target = process_name.lower()
         try:
@@ -113,7 +114,7 @@ class WindowsAudioController(AudioController):
         except Exception as e:
             logger.error(f"set_app_volume({process_name}): {e}")
 
-    def set_all_others_volume(self, level: float, exclude: Set[str], force: bool = False):
+    def set_all_others_volume(self, level: float, exclude: Set[str], force: bool = False, ramp=None):
         """
         Set volume on every session NOT matching any excluded target.
         Matching mirrors set_app_volume: case-insensitive substring of

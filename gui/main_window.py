@@ -684,8 +684,9 @@ class MainWindow(tk.Tk):
             self._tick_job = self.after(33, self._apply_tick)
 
     def _get_cached_assignments(self):
-        """Profile assignments (+ per-slider authoritative flags), cached -
-        rebuilt only when the profile or settings change, not on every tick."""
+        """Profile assignments (+ per-slider authoritative flags and glide
+        steps), cached - rebuilt only when the profile or settings change, not
+        on every tick."""
         if self._assignments_cache is None:
             assignments = self.config_mgr.get_profile_assignments()
             # Exclude set for 'all_others': every explicit app target assigned
@@ -695,13 +696,17 @@ class MainWindow(tk.Tk):
             for a in assignments:
                 exclude |= self._target_apps(a.get("target", ""))
             # Per-slider "authoritative": when on, the pot re-asserts its level
-            # every tick (force write), overriding external changes such as
-            # Firefox tying YouTube's volume to the stream volume.
-            authoritative = [
-                bool(self.config_mgr.get_slider_settings(i).get("authoritative", False))
-                for i in range(len(assignments))
-            ]
-            self._assignments_cache = (assignments, exclude, authoritative)
+            # every tick, overriding external changes. Its "glide" converts the
+            # per-full-range time (ms) into a max volume step per tick so a
+            # correction eases in instead of spiking (None = snap instantly).
+            authoritative = []
+            glide_steps = []
+            for i in range(len(assignments)):
+                s = self.config_mgr.get_slider_settings(i)
+                authoritative.append(bool(s.get("authoritative", False)))
+                gms = s.get("glide_ms", 0) or 0
+                glide_steps.append((self.TICK_MS / gms) if gms > 0 else None)
+            self._assignments_cache = (assignments, exclude, authoritative, glide_steps)
         return self._assignments_cache
 
     def _invalidate_assignments(self):
@@ -716,9 +721,11 @@ class MainWindow(tk.Tk):
     # returns None). When it CAN (e.g. Linux), a new stream is caught the very
     # next tick instead, so an unpaused video doesn't blast at full volume.
     SWEEP_EVERY = 5
+    TICK_MS = 33            # apply-loop cadence; used to turn a glide time into a
+                           # per-tick volume step for authoritative corrections.
 
     def _apply_values(self, values):
-        assignments, exclude, authoritative = self._get_cached_assignments()
+        assignments, exclude, authoritative, glide_steps = self._get_cached_assignments()
         # Pad trackers to length
         while len(self._last_ui_values) < len(values):
             self._last_ui_values.append(-1.0)
@@ -744,18 +751,22 @@ class MainWindow(tk.Tk):
 
             # AUDIO: touch the backend when our value changed, a new stream just
             # appeared, or this slider is authoritative (re-assert every tick).
-            # Normally the backend writes each stream on-change, so a forced
-            # re-apply with an unchanged value only affects the new stream and
-            # leaves user-adjusted streams (a website's own slider) alone. An
-            # authoritative slider instead writes unconditionally (force=True),
-            # so an external change to its app's volume is overridden next tick.
+            # For an authoritative slider the write is unconditional (force), but
+            # HOW it writes is asymmetric: a knob move or a brand-new stream is
+            # applied instantly (jump), while an ongoing correction of external
+            # drift is eased in via `ramp` (glide) so dragging a browser slider
+            # fades back to the knob instead of spiking. Non-authoritative
+            # sliders keep write-on-change, so a website's own slider sticks.
             auth = authoritative[i] if i < len(authoritative) else False
             changed = abs(values[i] - self._last_applied[i]) >= 0.0015
             if audio and i < len(assignments) and (changed or force or auth):
+                jump = changed or force        # instant for knob moves / new streams
+                ramp = None if (jump or not auth) else (
+                    glide_steps[i] if i < len(glide_steps) else None)
                 try:
                     audio.apply_slider(
                         assignments[i].get("target", ""), values[i],
-                        exclude=exclude, force=auth)
+                        exclude=exclude, force=auth, ramp=ramp)
                     if changed:
                         self._last_applied[i] = values[i]
                 except Exception as e:
