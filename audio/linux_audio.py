@@ -152,14 +152,19 @@ class LinuxAudioController(AudioController):
 
     EPS = 0.004   # ignore sub-0.4% changes (below the firmware deadband)
 
-    def _write_input(self, pulse, inp, level: float) -> bool:
+    def _write_input(self, pulse, inp, level: float, force: bool = False) -> bool:
         """Set one sink input's volume only if we haven't already set it to
         this level. Returns True if a write happened. This is what lets a
         website's own volume slider stick: if our slider hasn't moved, we don't
-        re-write the stream, so we don't undo the user's change."""
-        prev = self._applied_levels.get(inp.index)
-        if prev is not None and abs(prev - level) < self.EPS:
-            return False
+        re-write the stream, so we don't undo the user's change.
+
+        force=True (authoritative slider) skips that check and writes every time,
+        so an external change to the stream volume is overridden on the next
+        tick instead of being allowed to stick."""
+        if not force:
+            prev = self._applied_levels.get(inp.index)
+            if prev is not None and abs(prev - level) < self.EPS:
+                return False
         pulse.volume_set_all_chans(inp, level)
         self._applied_levels[inp.index] = level
         return True
@@ -171,10 +176,10 @@ class LinuxAudioController(AudioController):
             for idx in [i for i in self._applied_levels if i not in present_ids]:
                 del self._applied_levels[idx]
 
-    def set_master_volume(self, level: float):
+    def set_master_volume(self, level: float, force: bool = False):
         level = _clamp(level)
         def _do(pulse):
-            if (self._applied_master is not None
+            if (not force and self._applied_master is not None
                     and abs(self._applied_master - level) < self.EPS):
                 return
             sink = self._default_sink(pulse)
@@ -189,7 +194,7 @@ class LinuxAudioController(AudioController):
             return sink.volume.value_flat if sink else 0.0
         return self._safe(_do) or 0.0
 
-    def set_app_volume(self, process_name: str, level: float):
+    def set_app_volume(self, process_name: str, level: float, force: bool = False):
         level = _clamp(level)
         target = process_name.lower()
         def _do(pulse):
@@ -198,14 +203,14 @@ class LinuxAudioController(AudioController):
             for inp in pulse.sink_input_list():
                 present.add(inp.index)
                 if self._input_matches(inp, target):
-                    self._write_input(pulse, inp, level)
+                    self._write_input(pulse, inp, level, force=force)
                     matched = True
             self._prune_applied(present)
             if not matched:
                 logger.debug(f"No audio session for '{process_name}'")
         self._safe(_do)
 
-    def set_all_others_volume(self, level: float, exclude):
+    def set_all_others_volume(self, level: float, exclude, force: bool = False):
         """
         Set volume on every sink input NOT matching any excluded target.
         Matching mirrors set_app_volume (see _input_matches).
@@ -219,7 +224,7 @@ class LinuxAudioController(AudioController):
                 present.add(inp.index)
                 if any(self._input_matches(inp, t) for t in excl):
                     continue   # owned by another slider
-                self._write_input(pulse, inp, level)
+                self._write_input(pulse, inp, level, force=force)
             self._prune_applied(present)
         self._safe(_do)
 

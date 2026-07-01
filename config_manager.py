@@ -130,6 +130,9 @@ class ConfigManager:
         "cal_min": 0,
         "cal_max": 1023,
         "smoothing": None,   # None → use the global smoothing value
+        "authoritative": False,  # True → pot re-asserts this app's volume every
+                                 # tick, overriding external changes (e.g. Firefox
+                                 # /YouTube). Off = cooperative (in-app slider wins).
     }
 
     def get_slider_settings(self, index: int) -> dict:

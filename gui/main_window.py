@@ -447,7 +447,9 @@ class MainWindow(tk.Tk):
 
     def _on_slider_settings_saved(self):
         # Restart serial so calibration / invert / smoothing take effect,
-        # then refresh each card's mute indicator from config.
+        # refresh each card's mute indicator, and rebuild the assignments cache
+        # so a changed 'authoritative' flag is picked up by the apply loop.
+        self._invalidate_assignments()
         self._start_serial()
         self._apply_mute_visuals()
 
@@ -682,8 +684,8 @@ class MainWindow(tk.Tk):
             self._tick_job = self.after(33, self._apply_tick)
 
     def _get_cached_assignments(self):
-        """Profile assignments, cached - rebuilt only when the profile or
-        settings change, not on every tick."""
+        """Profile assignments (+ per-slider authoritative flags), cached -
+        rebuilt only when the profile or settings change, not on every tick."""
         if self._assignments_cache is None:
             assignments = self.config_mgr.get_profile_assignments()
             # Exclude set for 'all_others': every explicit app target assigned
@@ -692,7 +694,14 @@ class MainWindow(tk.Tk):
             exclude = set()
             for a in assignments:
                 exclude |= self._target_apps(a.get("target", ""))
-            self._assignments_cache = (assignments, exclude)
+            # Per-slider "authoritative": when on, the pot re-asserts its level
+            # every tick (force write), overriding external changes such as
+            # Firefox tying YouTube's volume to the stream volume.
+            authoritative = [
+                bool(self.config_mgr.get_slider_settings(i).get("authoritative", False))
+                for i in range(len(assignments))
+            ]
+            self._assignments_cache = (assignments, exclude, authoritative)
         return self._assignments_cache
 
     def _invalidate_assignments(self):
@@ -709,7 +718,7 @@ class MainWindow(tk.Tk):
     SWEEP_EVERY = 5
 
     def _apply_values(self, values):
-        assignments, exclude = self._get_cached_assignments()
+        assignments, exclude, authoritative = self._get_cached_assignments()
         # Pad trackers to length
         while len(self._last_ui_values) < len(values):
             self._last_ui_values.append(-1.0)
@@ -733,17 +742,20 @@ class MainWindow(tk.Tk):
         for i, panel in enumerate(self._slider_panels):
             if i >= len(values): break
 
-            # AUDIO: touch the backend when our value changed or a new stream
-            # just appeared. The backend writes each stream on-change, so a
-            # forced re-apply with an unchanged value only affects the new
-            # stream and leaves user-adjusted streams (a website's own slider)
-            # alone.
+            # AUDIO: touch the backend when our value changed, a new stream just
+            # appeared, or this slider is authoritative (re-assert every tick).
+            # Normally the backend writes each stream on-change, so a forced
+            # re-apply with an unchanged value only affects the new stream and
+            # leaves user-adjusted streams (a website's own slider) alone. An
+            # authoritative slider instead writes unconditionally (force=True),
+            # so an external change to its app's volume is overridden next tick.
+            auth = authoritative[i] if i < len(authoritative) else False
             changed = abs(values[i] - self._last_applied[i]) >= 0.0015
-            if audio and i < len(assignments) and (changed or force):
+            if audio and i < len(assignments) and (changed or force or auth):
                 try:
                     audio.apply_slider(
                         assignments[i].get("target", ""), values[i],
-                        exclude=exclude)
+                        exclude=exclude, force=auth)
                     if changed:
                         self._last_applied[i] = values[i]
                 except Exception as e:

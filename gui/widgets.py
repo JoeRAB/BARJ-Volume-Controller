@@ -1186,6 +1186,7 @@ class SliderSettingsDialog(_CenteredDialog, tk.Toplevel):
         s = config_mgr.get_slider_settings(index)
         self._muted_var  = tk.BooleanVar(value=bool(s["muted"]))
         self._invert_var = tk.BooleanVar(value=bool(s["invert"]))
+        self._auth_var   = tk.BooleanVar(value=bool(s.get("authoritative", False)))
         self._cal_min    = int(s["cal_min"])
         self._cal_max    = int(s["cal_max"])
         self._smoothing  = s["smoothing"]   # None = use global, else a float
@@ -1206,22 +1207,34 @@ class SliderSettingsDialog(_CenteredDialog, tk.Toplevel):
                  font=F.small, bg=T.bg_surface, fg=T.fg_muted
                  ).pack(anchor="w", pady=(0, 16))
 
-        def checkrow(text, var, hint):
-            tk.Checkbutton(outer, text=text, variable=var, font=F.body,
-                           bg=T.bg_surface, fg=T.fg,
-                           activebackground=T.bg_surface, activeforeground=T.fg,
-                           selectcolor=T.bg_input, highlightthickness=0, bd=0,
-                           cursor="hand2", anchor="w"
-                           ).pack(anchor="w", fill="x")
-            tk.Label(outer, text=hint, font=F.tiny, bg=T.bg_surface,
-                     fg=T.fg_subtle, anchor="w", justify="left",
-                     wraplength=320).pack(anchor="w", pady=(0, 12))
+        def checkrow(text, var, hint="", tooltip=None):
+            cb = tk.Checkbutton(outer, text=text, variable=var, font=F.body,
+                                bg=T.bg_surface, fg=T.fg,
+                                activebackground=T.bg_surface, activeforeground=T.fg,
+                                selectcolor=T.bg_input, highlightthickness=0, bd=0,
+                                cursor="hand2", anchor="w")
+            cb.pack(anchor="w", fill="x")
+            if tooltip:
+                Tooltip(cb, tooltip)
+            if hint:
+                tk.Label(outer, text=hint, font=F.tiny, bg=T.bg_surface,
+                         fg=T.fg_subtle, anchor="w", justify="left",
+                         wraplength=320).pack(anchor="w", pady=(0, 12))
+            else:
+                tk.Frame(outer, height=10, bg=T.bg_surface).pack()
 
         checkrow("Mute this slider", self._muted_var,
                  "Forces this slider's level to 0% until unmuted.")
         checkrow("Flip this slider's direction", self._invert_var,
                  "Reverses just this slider - useful when one pot is wired "
                  "backwards while the others are correct.")
+        checkrow("Take control of this app's volume", self._auth_var,
+                 tooltip="Keeps this app pinned to the knob, re-applying its level "
+                         "~30x/sec so nothing else can move it. Turn this on for "
+                         "Firefox / YouTube, whose own volume slider fights the knob "
+                         "and causes the volume to jump. Leave it off for games and "
+                         "Chrome - their in-app slider already stacks with the knob, "
+                         "and turning this on stops that in-app slider from working.")
 
         # Calibration
         tk.Frame(outer, bg=T.separator, height=1
@@ -1347,6 +1360,7 @@ class SliderSettingsDialog(_CenteredDialog, tk.Toplevel):
         i = self.index
         self.config_mgr.set_slider_setting(i, "muted", bool(self._muted_var.get()))
         self.config_mgr.set_slider_setting(i, "invert", bool(self._invert_var.get()))
+        self.config_mgr.set_slider_setting(i, "authoritative", bool(self._auth_var.get()))
         # Guard against inverted/empty calibration range
         lo, hi = self._cal_min, self._cal_max
         if hi <= lo:
@@ -1603,7 +1617,7 @@ class SliderPanel(tk.Frame):
         gear.bind("<Button-1>", lambda e: self._open_settings())
         gear.bind("<Enter>", lambda e: gear.config(fg=T.accent))
         gear.bind("<Leave>", lambda e: gear.config(fg=T.fg_subtle))
-        Tooltip(gear, "Invert or calibrate this slider")
+        Tooltip(gear, "Settings")
 
         # Mute toggle - a speaker icon directly on the card (not in the menu).
         # Uses plain text glyphs (not emoji) so it renders on every system.
@@ -1616,7 +1630,7 @@ class SliderPanel(tk.Frame):
         self._mute_btn.bind("<Button-1>", lambda e: self.toggle_mute())
         self._mute_btn.bind("<Enter>", lambda e: self._mute_hover(True))
         self._mute_btn.bind("<Leave>", lambda e: self._mute_hover(False))
-        Tooltip(self._mute_btn, "Mute / unmute this slider")
+        Tooltip(self._mute_btn, "Mute")
         self._update_mute_icon()
 
         # Target selector: a large button that opens the multi-select popup.
@@ -1627,6 +1641,7 @@ class SliderPanel(tk.Frame):
             style="default", width=10, height=38, font=F.small,
             bg_under=T.bg_card)
         self._target_btn.pack(fill="x")
+        Tooltip(self._target_btn, "Assign app")
 
         # Status: coloured dot + short label. The label has a FIXED character
         # width so its requested size never changes with the wording (e.g. when

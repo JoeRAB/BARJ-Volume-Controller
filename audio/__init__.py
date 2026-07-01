@@ -43,23 +43,26 @@ def _running_process_names() -> Set[str]:
 class AudioController(ABC):
 
     @abstractmethod
-    def set_master_volume(self, level: float):
-        """Set the default playback device volume. level is 0.0–1.0."""
+    def set_master_volume(self, level: float, force: bool = False):
+        """Set the default playback device volume. level is 0.0–1.0.
+        force=True writes even if unchanged (used by authoritative sliders)."""
 
     @abstractmethod
     def get_master_volume(self) -> float:
         """Return current master volume as 0.0–1.0."""
 
     @abstractmethod
-    def set_app_volume(self, process_name: str, level: float):
-        """Set volume for all audio sessions belonging to process_name."""
+    def set_app_volume(self, process_name: str, level: float, force: bool = False):
+        """Set volume for all audio sessions belonging to process_name.
+        force=True writes even if unchanged (used by authoritative sliders)."""
 
     @abstractmethod
-    def set_all_others_volume(self, level: float, exclude: Set[str]):
+    def set_all_others_volume(self, level: float, exclude: Set[str], force: bool = False):
         """
         Set volume on every running audio app whose name does NOT match
         any entry in `exclude` (the targets assigned to other sliders).
         Matching must mirror set_app_volume's matching rules.
+        force=True writes even if unchanged (used by authoritative sliders).
         """
 
     @abstractmethod
@@ -67,7 +70,8 @@ class AudioController(ABC):
         """Return sorted list of process names currently producing audio."""
 
     def apply_slider(self, target, level: float,
-                     exclude: Optional[Set[str]] = None):
+                     exclude: Optional[Set[str]] = None,
+                     force: bool = False):
         """
         Route a slider value to its assigned target.
 
@@ -80,6 +84,10 @@ class AudioController(ABC):
 
         `exclude` is the set of app targets assigned to OTHER sliders -
         only used by 'all_others'.
+
+        `force` (authoritative slider) makes the backend write the volume even
+        if it matches what we last set, so external changes (e.g. Firefox tying
+        YouTube's slider to the stream volume) get overridden each tick.
         """
         if not target:
             return
@@ -91,17 +99,17 @@ class AudioController(ABC):
             if t == "none":
                 return          # explicit "controls nothing" assignment
             if t == "master":
-                self.set_master_volume(level)
+                self.set_master_volume(level, force=force)
                 return
             if t == "all_others":
-                self.set_all_others_volume(level, exclude or set())
+                self.set_all_others_volume(level, exclude or set(), force=force)
                 return
             targets = [target]
         else:
             targets = [a for a in target if a and a.strip()]
 
         for app in targets:
-            self.set_app_volume(app, level)
+            self.set_app_volume(app, level, force=force)
 
     def current_input_ids(self):
         """Return a set of identifiers for the audio streams currently playing,
